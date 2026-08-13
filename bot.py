@@ -1,15 +1,13 @@
 import os
 import re
 import html
-import random
-import string
 import asyncio
 import threading
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from dotenv import load_dotenv
-from pymongo import MongoClient
+from pymongo import MongoClient, ReturnDocument
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import (
@@ -26,17 +24,19 @@ load_dotenv()
 # ===========================
 # RIZZLER_BOT_TOKEN=xxxx
 # MONGO_URI=xxxx
-# ADMIN_IDS=123,456
+# ADMIN_IDS=123,456   -> ye "OWNERS" hai, sirf ye naye bot-admin add/remove kar sakte hai
 
 BOT_TOKEN = os.getenv("RIZZLER_BOT_TOKEN")
-BRAND = "@rizzlerxescrow"          # "Escrow Bot for @..." line
-PROVIDER = "@rizzlerxescrow"       # "Provided by @..." line
+BRAND = "@rizzlerxescrow"
+PROVIDER = "@rizzlerxescrow"
 
 MONGO_URI = os.getenv("MONGO_URI")
-ADMIN_IDS = [
+OWNER_IDS = set(
     int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip().isdigit()
-]
+)
 
+# In "limited" secondary accounts se /add ya /close chale to "Escrowed By" me
+# inka username nahi, mapped MAIN username dikhega.
 ADMIN_ALIASES = {
     8258334055: "primaxog",
     8651783270: "gareeb_jimmy",
@@ -46,6 +46,8 @@ ADMIN_ALIASES = {
 mongo_client = MongoClient(MONGO_URI) if MONGO_URI else None
 mongo_db = mongo_client["escrow_bots"] if mongo_client else None
 coll = mongo_db["deals_rizzlerxescrow"] if mongo_db is not None else None
+meta_coll = mongo_db["meta_rizzlerxescrow"] if mongo_db is not None else None
+admins_coll = mongo_db["bot_admins_rizzlerxescrow"] if mongo_db is not None else None
 
 DEALS = {}
 
@@ -55,50 +57,60 @@ if coll is not None:
         DEALS[tid] = doc
     print(f"✅ [rizzlerxescrow] {len(DEALS)} deal(s) Mongo se load hui")
 
+# ---- Bot-admin set (owners + dynamically added admins) ----
+BOT_ADMINS = set(OWNER_IDS)
+if admins_coll is not None:
+    for doc in admins_coll.find({}):
+        BOT_ADMINS.add(doc["_id"])
+    print(f"✅ [rizzlerxescrow] {len(BOT_ADMINS)} bot admin(s) load hue")
+
 
 def save_deal(tid):
     if coll is not None:
         coll.update_one({"_id": tid}, {"$set": dict(DEALS[tid])}, upsert=True)
 
 
+def is_owner(uid):
+    return uid in OWNER_IDS
+
+
+def is_admin(uid):
+    return uid in BOT_ADMINS or is_owner(uid)
+
+
+def admin_only_allowed(update: Update):
+    """Admin commands sirf private chat me, aur sirf admin/owner ke liye."""
+    if update.effective_chat.type != "private":
+        return False
+    return is_admin(update.effective_user.id)
+
+
 # ===========================
-# Bold unicode helper (Mathematical Sans-Bold block)
+# Sequential Trade ID: DL-RIZZ-1, DL-RIZZ-2, ...
 # ===========================
 
-_UP = ord('𝗔') - ord('A')
-_LOW = ord('𝗮') - ord('a')
-_DIG = ord('𝟬') - ord('0')
+def next_trade_id():
+    if meta_coll is not None:
+        doc = meta_coll.find_one_and_update(
+            {"_id": "trade_counter"},
+            {"$inc": {"seq": 1}},
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+        )
+        seq = doc["seq"]
+    else:
+        seq = len(DEALS) + 1
+
+    tid = f"DL-RIZZ-{seq}"
+    while tid in DEALS:  # safety, collision na ho
+        seq += 1
+        tid = f"DL-RIZZ-{seq}"
+    return tid
 
 
-def to_bold(text):
-    out = []
-    for ch in text:
-        if 'A' <= ch <= 'Z':
-            out.append(chr(ord(ch) + _UP))
-        elif 'a' <= ch <= 'z':
-            out.append(chr(ord(ch) + _LOW))
-        elif '0' <= ch <= '9':
-            out.append(chr(ord(ch) + _DIG))
-        else:
-            out.append(ch)
-    return "".join(out)
-
-
-def normalize_bold(text):
-    # bold-sans unicode wapas normal ASCII me convert karta hai (parsing ke liye)
-    out = []
-    for ch in text:
-        code = ord(ch)
-        if ord('𝗔') <= code <= ord('𝗭'):
-            out.append(chr(code - _UP))
-        elif ord('𝗮') <= code <= ord('𝘇'):
-            out.append(chr(code - _LOW))
-        elif ord('𝟬') <= code <= ord('𝟵'):
-            out.append(chr(code - _DIG))
-        else:
-            out.append(ch)
-    return "".join(out)
-
+# ===========================
+# Helpers
+# ===========================
 
 def esc(text):
     if text is None:
@@ -135,12 +147,33 @@ def resolve_username(update: Update):
     )
 
 
+# Bold unicode (Mathematical Sans-Bold) helpers
+_UP = ord('𝗔') - ord('A')
+_LOW = ord('𝗮') - ord('a')
+_DIG = ord('𝟬') - ord('0')
+
+
+def normalize_bold(text):
+    out = []
+    for ch in text:
+        code = ord(ch)
+        if ord('𝗔') <= code <= ord('𝗭'):
+            out.append(chr(code - _UP))
+        elif ord('𝗮') <= code <= ord('𝘇'):
+            out.append(chr(code - _LOW))
+        elif ord('𝟬') <= code <= ord('𝟵'):
+            out.append(chr(code - _DIG))
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
 # ===========================
-# Premium Emoji IDs (jo tumne diye)
+# Premium Emoji IDs — yaha bas value badal ke apni premium emoji IDs daal dena
 # ===========================
 
 PE = {
-    "star1": "6264777724741556322",
+    "star1": "6113744392323867038",
     "star2": "5258179403652801593",
     "heart": "5260535596941582167",
     "chat": "5258330865674494479",
@@ -184,15 +217,6 @@ def calculate_fee(amount, is_exchange=False):
         return amount * 0.03
 
 
-def generate_tid():
-    while True:
-        tid = "#TID" + "".join(
-            random.choices(string.ascii_uppercase + string.digits, k=6)
-        )
-        if tid not in DEALS:
-            return tid
-
-
 # ===========================
 # Dashboard views
 # ===========================
@@ -230,7 +254,7 @@ def welcome_text(first_name):
 
 def global_stats_text():
     completed = [d for d in DEALS.values() if d.get("status") == "COMPLETED"]
-    totals = {}
+    totals = {"TON": 0.0, "USDT": 0.0, "INR": 0.0}
     for d in completed:
         cur = d.get("currency", "INR")
         totals[cur] = totals.get(cur, 0.0) + d.get("amount", 0.0)
@@ -240,21 +264,48 @@ def global_stats_text():
         "──────────────────",
         f"{pe('🔥', 'fire')} Total Deals: {len(completed)}\n",
         f"{pe('📈', 'chart')} <b>Total Volume:</b>",
-    ]
-    if not totals:
-        lines.append("  (abhi koi completed deal nahi hai)")
-    else:
-        icon_map = {"TON": ("🪙", "coin"), "USDT": ("💰", "money"), "INR": ("🤑", "cash")}
-        for cur, amt in totals.items():
-            icon, key = icon_map.get(cur, ("💠", "coin"))
-            lines.append(f"  {pe(icon, key)} - {amt} {cur}")
-
-    lines += [
+        f"  {pe('🪙', 'coin')} - {totals['TON']:g} TON",
+        f"  {pe('💰', 'money')} - {totals['USDT']:g} USDT",
+        f"  {pe('🤑', 'cash')} - {totals['INR']:g} ₹",
         "──────────────────",
         f"{pe('📱', 'mobile')} Escrow Bot for {BRAND}",
         f"{pe('💤', 'zzz')} Provided by {PROVIDER}",
     ]
     return "\n".join(lines)
+
+
+# ---- Leaderboard / rank ----
+
+def _is_today(iso_ts):
+    if not iso_ts:
+        return False
+    try:
+        ts = datetime.fromisoformat(iso_ts)
+    except ValueError:
+        return False
+    return ts.date() == datetime.now(timezone.utc).date()
+
+
+def build_leaderboard(today_only=False):
+    board = {}
+    for d in DEALS.values():
+        if d.get("status") != "COMPLETED":
+            continue
+        if today_only and not _is_today(d.get("completed_at")):
+            continue
+        user = d.get("escrowed_by", "-")
+        entry = board.setdefault(user, {"deals": 0, "volume": 0.0})
+        entry["deals"] += 1
+        entry["volume"] += d.get("amount", 0.0)
+    return board
+
+
+def get_rank(username, board, by="deals"):
+    ranked = sorted(board.items(), key=lambda kv: kv[1][by], reverse=True)
+    for i, (user, _) in enumerate(ranked, start=1):
+        if user == username:
+            return i
+    return len(ranked) + 1
 
 
 def my_stats_text(update: Update):
@@ -280,31 +331,99 @@ def my_stats_text(update: Update):
         f"{pe('🔥', 'fire')} Active deals ➤ {len(active)}\n\n"
         f"{pe('✅', 'check')} Total Escrow's ➤ {len(completed)}\n\n"
         f"{pe('⚡', 'bolt')} Total Volume :\n"
-        f"  {pe('🪙', 'coin')} ➤ {totals.get('TON', 0.0):g} TON\n"
-        f"  {pe('💰', 'money')} ➤ {totals.get('USDT', 0.0):g} USDT\n"
-        f"  {pe('🤑', 'cash')} ➤ {totals.get('INR', 0.0):g} ₹\n"
+        f"  {pe('🪙', 'coin')} ➤ {totals['TON']:g} TON\n"
+        f"  {pe('💰', 'money')} ➤ {totals['USDT']:g} USDT\n"
+        f"  {pe('🤑', 'cash')} ➤ {totals['INR']:g} ₹\n"
         "──────────────────\n"
         f"{pe('📱', 'mobile')} Escrow Bot for {BRAND}\n"
         f"{pe('💤', 'zzz')} Provided by {PROVIDER} !"
     )
 
 
-def my_deals_text(update: Update):
-    username = resolve_username(update)
-    mine = [
-        (tid, d) for tid, d in DEALS.items() if d.get("escrowed_by") == username
-    ]
-    if not mine:
-        return "📭 Tumhari koi deal record nahi hai."
+# ---- My Deals Info: paginated list + detail view ----
 
-    lines = [f"{pe('★', 'star2')} <b>My Deals Info</b>", "──────────────────"]
-    for tid, d in mine[-15:]:
-        lines.append(
-            f"<code>{esc(tid)}</code> — {d['status']} — "
-            f"{esc(d.get('buyer','-'))} ↔ {esc(d.get('seller','-'))} — "
-            f"{fmt(d.get('amount',0), d.get('currency','INR'))}"
-        )
+PAGE_SIZE = 6
+
+
+def deal_status_display(status):
+    return {
+        "ACTIVE": "🟡 PENDING",
+        "COMPLETED": "✅ DONE",
+        "CANCELLED": "❌ CANCELLED",
+    }.get(status, status)
+
+
+def deal_detail_text(tid, deal):
+    lines = [
+        f"Your Deal-{esc(tid)} Info !",
+        "──────────────────",
+        f"➥ Status: {deal_status_display(deal.get('status', '-'))}",
+        f"➥ Buyer: {esc(deal.get('buyer', '-'))}",
+        f"➥ Seller: {esc(deal.get('seller', '-'))}",
+        f"➥ Amount: {fmt(deal.get('amount', 0), deal.get('currency', 'INR'))}",
+        f"➥ Fees: {deal.get('fee_percent', 0):.1f}%",
+        f"➥ Escrowed by: {esc(deal.get('escrowed_by', '-'))}",
+    ]
+
+    if deal.get("created_at"):
+        dt = datetime.fromisoformat(deal["created_at"])
+        lines.append(f"➥ Start Time: {dt.strftime('%H:%M:%S')}")
+        lines.append(f"     [ {dt.strftime('%d %B %Y')} ]")
+
+    if deal.get("completed_at"):
+        dt2 = datetime.fromisoformat(deal["completed_at"])
+        lines.append(f"➥ End Time: {dt2.strftime('%H:%M:%S')}")
+        lines.append(f"     [ {dt2.strftime('%d %B %Y')} ]")
+
+    lines += [
+        "──────────────────",
+        f"{pe('📱', 'mobile')} Escrow Bot for {BRAND}",
+        f"{pe('💤', 'zzz')} Provided by {PROVIDER}",
+    ]
     return "\n".join(lines)
+
+
+def my_deals_header_text(update: Update):
+    first_name = update.effective_user.first_name
+    return (
+        f"{pe('♡', 'heart')} <b>{esc(first_name)} All deals info !</b>\n"
+        "──────────────────\n"
+        "Select the deal below for info :\n"
+        "──────────────────"
+    )
+
+
+def my_deals_ids(update: Update):
+    username = resolve_username(update)
+    ids = [tid for tid, d in DEALS.items() if d.get("escrowed_by") == username]
+    return list(reversed(ids))  # naye deals upar
+
+
+def my_deals_kb(update: Update, page=0):
+    ids = my_deals_ids(update)
+    start = page * PAGE_SIZE
+    chunk = ids[start:start + PAGE_SIZE]
+
+    rows = [[InlineKeyboardButton(tid, callback_data=f"dealview:{tid}:{page}")] for tid in chunk]
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀ Prev", callback_data=f"dealspage:{page-1}"))
+    if start + PAGE_SIZE < len(ids):
+        nav.append(InlineKeyboardButton("Next ▶", callback_data=f"dealspage:{page+1}"))
+    if nav:
+        rows.append(nav)
+
+    rows.append([InlineKeyboardButton("➤ Back", callback_data="menu:back")])
+    return InlineKeyboardMarkup(rows), len(ids)
+
+
+def deal_view_kb(page):
+    rows = [
+        [InlineKeyboardButton("◀ Back to My Deals", callback_data=f"dealspage:{page}")],
+        [InlineKeyboardButton("➤ Main Menu", callback_data="menu:back")],
+    ]
+    return InlineKeyboardMarkup(rows)
 
 
 def pending_deals_text(update: Update):
@@ -328,50 +447,12 @@ def pending_deals_text(update: Update):
 
 
 # ===========================
-# Leaderboard / Rank helpers
-# ===========================
-
-def _is_today(iso_ts):
-    if not iso_ts:
-        return False
-    try:
-        ts = datetime.fromisoformat(iso_ts)
-    except ValueError:
-        return False
-    now = datetime.now(timezone.utc)
-    return ts.date() == now.date()
-
-
-def build_leaderboard(today_only=False):
-    """returns dict: username -> {'deals': int, 'volume': float}"""
-    board = {}
-    for d in DEALS.values():
-        if d.get("status") != "COMPLETED":
-            continue
-        if today_only and not _is_today(d.get("completed_at")):
-            continue
-        user = d.get("escrowed_by", "-")
-        entry = board.setdefault(user, {"deals": 0, "volume": 0.0})
-        entry["deals"] += 1
-        entry["volume"] += d.get("amount", 0.0)
-    return board
-
-
-def get_rank(username, board, by="deals"):
-    ranked = sorted(board.items(), key=lambda kv: kv[1][by], reverse=True)
-    for i, (user, _) in enumerate(ranked, start=1):
-        if user == username:
-            return i
-    return len(ranked) + 1  # koi deal nahi -> list ke aakhir me
-
-
-# ===========================
-# Handlers
+# /start
 # ===========================
 
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
-        return  # group me /start kaam nahi karega — sirf /add, /close chalenge
+        return  # group me /start kaam nahi karega
 
     await update.message.reply_text(
         welcome_text(update.effective_user.first_name),
@@ -393,13 +474,34 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    if data in ("menu:my_deals",) or data.startswith("dealspage:"):
+        page = 0
+        if data.startswith("dealspage:"):
+            page = int(data.split(":", 1)[1])
+        kb, total = my_deals_kb(update, page)
+        if total == 0:
+            text = my_deals_header_text(update) + "\n\n📭 Koi deal nahi mili."
+        else:
+            text = my_deals_header_text(update)
+        await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+        return
+
+    if data.startswith("dealview:"):
+        _, tid, page = data.split(":", 2)
+        deal = DEALS.get(tid)
+        if not deal:
+            await query.edit_message_text("❌ Deal not found.", reply_markup=deal_view_kb(int(page)))
+            return
+        await query.edit_message_text(
+            deal_detail_text(tid, deal),
+            reply_markup=deal_view_kb(int(page)),
+        )
+        return
+
     target = None
     if data in ("menu:my_stats", "refresh:my_stats"):
         target = "my_stats"
         text = my_stats_text(update)
-    elif data in ("menu:my_deals", "refresh:my_deals"):
-        target = "my_deals"
-        text = my_deals_text(update)
     elif data in ("menu:pending", "refresh:pending"):
         target = "pending"
         text = pending_deals_text(update)
@@ -417,9 +519,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ===========================
-# /add -> ESCROW DEAL format (bold unicode) pe reply karke, ya normal text pe bhi
-# "/add exchange" -> id exchange deal (2.5% flat fee)
-# Optional: "CURRENCY : USDT" ya "CURRENCY : TON" likha ho to us currency me track hota hai
+# /add
 # ===========================
 
 async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -434,9 +534,7 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     buyer = re.search(r"BUYER\s*:\s*(.*)", text, re.IGNORECASE)
     detail = re.search(r"DEAL DETAIL\s*:\s*(.*)", text, re.IGNORECASE)
     amount = re.search(r"DEAL AMOUNT\s*:\s*(.*)", text, re.IGNORECASE)
-    exp_time = re.search(
-        r"EXPECTED TIME TO COMPLETE DEAL\s*:\s*(.*)", text, re.IGNORECASE
-    )
+    exp_time = re.search(r"EXPECTED TIME TO COMPLETE DEAL\s*:\s*(.*)", text, re.IGNORECASE)
     tc = re.search(r"T\s*/\s*C\s*(?:\(IF ANY\))?\s*:\s*(.*)", text, re.IGNORECASE)
     currency = re.search(r"CURRENCY\s*:\s*(\w+)", text, re.IGNORECASE)
 
@@ -450,11 +548,12 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     is_exchange = bool(context.args) and context.args[0].lower() == "exchange"
 
-    tid = generate_tid()
+    tid = next_trade_id()
     creator_username = resolve_username(update)
 
     fee_amount = calculate_fee(amount_val, is_exchange)
     release_val = amount_val - fee_amount
+    fee_percent = (fee_amount / amount_val * 100) if amount_val else 0.0
 
     DEALS[tid] = {
         "seller": seller_val,
@@ -462,6 +561,7 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "detail": detail_val,
         "amount": amount_val,
         "release": release_val,
+        "fee_percent": fee_percent,
         "exp_time": exp_time_val,
         "tc": tc_val,
         "currency": currency_val,
@@ -494,27 +594,24 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ===========================
-# /close -> DEAL ke message pe reply karke chalao
-# "/close cancel" -> deal cancel, 100% charge cut
+# /close
 # ===========================
 
 async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
-        await update.message.reply_text(
-            "❌ Us deal ke message pe reply karke /close bhejo."
-        )
+        await update.message.reply_text("❌ Us deal ke message pe reply karke /close bhejo.")
         return
 
     reply_text = update.message.reply_to_message.text or ""
-    match = re.search(r"Trade ID:\s*(#TID\w+)", reply_text, re.IGNORECASE)
+    match = re.search(r"Trade ID:\s*(DL-RIZZ-\d+)", reply_text, re.IGNORECASE)
 
     if not match:
-        await update.message.reply_text(
-            "❌ Reply kiye gaye message me Trade ID nahi mila."
-        )
+        await update.message.reply_text("❌ Reply kiye gaye message me Trade ID nahi mila.")
         return
 
-    tid = match.group(1).upper()
+    tid = match.group(1).upper().replace("DL-RIZZ", "DL-RIZZ")
+    # case-sensitive rakhna hai kyunki DEALS keys yahi format use karti hain
+    tid = match.group(1)
     deal = DEALS.get(tid)
 
     if not deal:
@@ -570,12 +667,11 @@ async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ===========================
-# /status -> admin only
+# /status, /leaderboard, /deal — admin only, private chat only, silent skip warna
 # ===========================
 
 async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("❌ Ye command sirf admin ke liye hai.")
+    if not admin_only_allowed(update):
         return
 
     if not DEALS:
@@ -594,8 +690,7 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def leaderboard_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
-        await update.message.reply_text("❌ Ye command sirf admin ke liye hai.")
+    if not admin_only_allowed(update):
         return
 
     today_board = build_leaderboard(today_only=True)
@@ -619,6 +714,128 @@ async def leaderboard_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+
+async def deal_lookup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/deal DL-RIZZ-5 -> admin kisi bhi deal ki full detail (escrowed_by samet) dekh sakta hai."""
+    if not admin_only_allowed(update):
+        return
+
+    if not context.args:
+        await update.message.reply_text("Usage: <code>/deal DL-RIZZ-5</code>", parse_mode=ParseMode.HTML)
+        return
+
+    tid = context.args[0].upper()
+    deal = DEALS.get(tid)
+    if not deal:
+        await update.message.reply_text("❌ Deal not found.")
+        return
+
+    await update.message.reply_text(deal_detail_text(tid, deal))
+
+
+# ===========================
+# Bot-admin management — sirf OWNER (.env ADMIN_IDS) add/remove kar sakta hai
+# ===========================
+
+async def addadmin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type != "private" or not is_owner(update.effective_user.id):
+        return
+
+    if update.message.reply_to_message:
+        target_id = update.message.reply_to_message.from_user.id
+    elif context.args and context.args[0].isdigit():
+        target_id = int(context.args[0])
+    else:
+        await update.message.reply_text(
+            "Usage: kisi user ke message pe reply karke /addadmin bhejo, "
+            "ya <code>/addadmin &lt;user_id&gt;</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    BOT_ADMINS.add(target_id)
+    if admins_coll is not None:
+        admins_coll.update_one(
+            {"_id": target_id},
+            {"$set": {"added_by": update.effective_user.id}},
+            upsert=True,
+        )
+    await update.message.reply_text(f"✅ <code>{target_id}</code> ab bot admin hai.", parse_mode=ParseMode.HTML)
+
+
+async def removeadmin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type != "private" or not is_owner(update.effective_user.id):
+        return
+
+    if update.message.reply_to_message:
+        target_id = update.message.reply_to_message.from_user.id
+    elif context.args and context.args[0].isdigit():
+        target_id = int(context.args[0])
+    else:
+        await update.message.reply_text(
+            "Usage: <code>/removeadmin &lt;user_id&gt;</code>", parse_mode=ParseMode.HTML
+        )
+        return
+
+    if target_id in OWNER_IDS:
+        await update.message.reply_text("❌ Owner ko remove nahi kar sakte.")
+        return
+
+    BOT_ADMINS.discard(target_id)
+    if admins_coll is not None:
+        admins_coll.delete_one({"_id": target_id})
+    await update.message.reply_text(f"✅ <code>{target_id}</code> ab admin nahi raha.", parse_mode=ParseMode.HTML)
+
+
+async def admins_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not admin_only_allowed(update):
+        return
+
+    lines = [f"{pe('👑', 'check')} <b>Owners</b>"]
+    lines += [f"  <code>{uid}</code>" for uid in OWNER_IDS] or ["  (koi owner set nahi hai)"]
+    extra_admins = BOT_ADMINS - OWNER_IDS
+    lines.append(f"\n{pe('🛡', 'check')} <b>Bot Admins</b>")
+    lines += [f"  <code>{uid}</code>" for uid in extra_admins] or ["  (koi extra admin nahi hai)"]
+
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+
+
+# ===========================
+# /help — admin/owner ko sab commands, normal user ko sirf user commands
+# ===========================
+
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    lines = [
+        f"{pe('📖', 'check')} <b>Commands</b>",
+        "──────────────────",
+        "<b>👤 User Commands</b>",
+        "/start — Dashboard kholo (private chat)",
+        "/add — Deal create karo (deal message pe reply karke)",
+        "/close — Deal complete karo (deal message pe reply karke)",
+        "/help — Ye list dikhata hai",
+    ]
+
+    if is_admin(uid):
+        lines += [
+            "",
+            "<b>🛡 Admin Commands</b> (private chat me hi kaam karenge)",
+            "/status — Saari deals ki list",
+            "/leaderboard — Today + All-time top dealer/earner",
+            "/deal &lt;DL-RIZZ-N&gt; — Kisi bhi deal ki full detail dekho",
+            "/admins — Bot admins ki list dekho",
+        ]
+
+    if is_owner(uid):
+        lines += [
+            "",
+            "<b>👑 Owner Commands</b>",
+            "/addadmin — Reply karke (ya ID de ke) naya bot admin banao",
+            "/removeadmin — Reply karke (ya ID de ke) admin hatao",
+        ]
+
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
 
 
 # ===========================
@@ -665,6 +882,11 @@ def main():
     app.add_handler(CommandHandler("close", close))
     app.add_handler(CommandHandler("status", status_cmd))
     app.add_handler(CommandHandler("leaderboard", leaderboard_cmd))
+    app.add_handler(CommandHandler("deal", deal_lookup_cmd))
+    app.add_handler(CommandHandler("addadmin", addadmin_cmd))
+    app.add_handler(CommandHandler("removeadmin", removeadmin_cmd))
+    app.add_handler(CommandHandler("admins", admins_cmd))
+    app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CallbackQueryHandler(callback_router))
 
     print("✅ RizzlerXEscrow Bot Running...")
