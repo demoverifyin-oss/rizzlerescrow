@@ -735,11 +735,11 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{pe('📤')} <b>Fee:</b> {fee_percent:.2f}% — {fmt(fee_amount, currency_val)}\n"
         f"{pe('📤')} <b>Net Release:</b> {fmt(release_val, currency_val)}\n"
         f"{pe('🆔')} <b>Trade ID:</b> <code>{esc(tid)}</code>\n\n"
-        f"<b>👤 Buyer:</b> {esc(buyer_val)}\n"
-        f"<b>👤 Seller:</b> {esc(seller_val)}\n"
-        f"<b>📝 Detail:</b> {esc(detail_val)}\n"
-        f"<b>⏱ Expected Time:</b> {esc(exp_time_val)}\n"
-        f"<b>📌 T/C:</b> {esc(tc_val)}\n\n"
+        f"{pe('👤')} <b>Buyer:</b> {esc(buyer_val)}\n"
+        f"{pe('👤')} <b>Seller:</b> {esc(seller_val)}\n"
+        f"{pe('📝')} <b>Detail:</b> {esc(detail_val)}\n"
+        f"{pe('⏱️')} <b>Expected Time:</b> {esc(exp_time_val)}\n"
+        f"{pe('📌')} <b>T/C:</b> {esc(tc_val)}\n\n"
         f"{pe('🛡')} <b>Escrowed By:</b> {esc(creator_username)}"
     )
 
