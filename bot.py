@@ -169,11 +169,22 @@ def normalize_bold(text):
 
 
 # ===========================
-# Premium Emoji IDs — yaha bas value badal ke apni premium emoji IDs daal dena
+# Premium Emoji IDs
 # ===========================
-
+# Ye IDs Telegram Premium custom-emoji document IDs hain. Har entry me "character"
+# (jaise ⭐, ❤️) sirf fallback hai un clients ke liye jinke paas Premium nahi hai —
+# actual visual wahi custom emoji hoga jiska ID diya gaya hai.
+#
+# Agar koi ID galat / expired ho jaaye to Telegram sirf fallback character dikha
+# dega (crash nahi hoga). Apni khud ki custom emoji IDs nikalne ke liye:
+#   1) Us emoji ko kisi message me bhejo jisme HTML/entities dikhne wala export ho
+#      (ya koi "emoji id finder" utility bot use karo jo message forward karke
+#      custom_emoji entities se ID nikaalta hai).
+#   2) Wahan se mile document_id ko yaha neeche waali dict me daal do.
+#
+# Neeche di gayi IDs me se check / trade / escrow verify ho chuki hain (working).
 PE = {
-    "star1": "6113744392323867038",
+    "star1": "5181422544162391976",
     "star2": "5258179403652801593",
     "heart": "5260535596941582167",
     "chat": "5258330865674494479",
@@ -187,7 +198,10 @@ PE = {
     "cash": "5893473283696759404",
     "mobile": "6152069549442208798",
     "zzz": "5895266423952904371",
-    "check": "5774138454896022007",
+    "check": "5197474765387864959",    # ✅ verified working
+    "trade": "5936017305585586269",    # 🆔 verified working
+    "escrow": "5920052658743283381",   # 🛡 verified working
+    "star3": "5879785854284599288",    # ⭐ extra verified id
 }
 
 
@@ -227,6 +241,16 @@ def main_menu_kb():
         [InlineKeyboardButton("★ My Deals Info", callback_data="menu:my_deals")],
         [InlineKeyboardButton("➤ My Pending Deals", callback_data="menu:pending")],
         [InlineKeyboardButton("✓ Escrow Global Stats", callback_data="menu:global")],
+    ]
+    return InlineKeyboardMarkup(rows)
+
+
+def status_kb():
+    """Keyboard jo /status ke saath jaata hai — private aur group dono me kaam karta hai."""
+    rows = [
+        [InlineKeyboardButton("★ My Deals Info", callback_data="menu:my_deals")],
+        [InlineKeyboardButton("➤ My Pending Deals", callback_data="menu:pending")],
+        [InlineKeyboardButton("🔄 Refresh", callback_data="refresh:my_stats")],
     ]
     return InlineKeyboardMarkup(rows)
 
@@ -467,11 +491,19 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     if data == "menu:back":
-        await query.edit_message_text(
-            welcome_text(update.effective_user.first_name),
-            parse_mode=ParseMode.HTML,
-            reply_markup=main_menu_kb(),
-        )
+        # Private me full dashboard, group me wapas apne status pe.
+        if update.effective_chat.type == "private":
+            await query.edit_message_text(
+                welcome_text(update.effective_user.first_name),
+                parse_mode=ParseMode.HTML,
+                reply_markup=main_menu_kb(),
+            )
+        else:
+            await query.edit_message_text(
+                my_stats_text(update),
+                parse_mode=ParseMode.HTML,
+                reply_markup=status_kb(),
+            )
         return
 
     if data in ("menu:my_deals",) or data.startswith("dealspage:"):
@@ -519,10 +551,26 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ===========================
+# /status  — HAR USER, PRIVATE + GROUP dono me kaam karega
+# ===========================
+
+async def mystatus_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Har user apna khud ka status dekh sakta hai — group ho ya private, koi restriction nahi."""
+    await update.message.reply_text(
+        my_stats_text(update),
+        parse_mode=ParseMode.HTML,
+        reply_markup=status_kb(),
+    )
+
+
+# ===========================
 # /add
 # ===========================
 
 async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not admin_only_allowed(update):
+            return
+    
     raw_text = (
         update.message.reply_to_message.text
         if update.message.reply_to_message
@@ -576,7 +624,7 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         f"{pe('💰', 'money')} Deal Amount: {fmt(amount_val, currency_val)}\n"
         f"{pe('📤', 'chart')} Release/Refund Amount: {fmt(release_val, currency_val)}\n"
-        f"{pe('🆔', 'check')} Trade ID: <code>{esc(tid)}</code>\n\n"
+        f"{pe('🆔', 'trade')} Trade ID: <code>{esc(tid)}</code>\n\n"
         f"<b>Continue the Deal</b>\n"
         f"Buyer: {esc(buyer_val)}\n"
         f"Seller: {esc(seller_val)}\n"
@@ -598,6 +646,9 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ===========================
 
 async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not admin_only_allowed(update):
+            return
+    
     if not update.message.reply_to_message:
         await update.message.reply_text("❌ Us deal ke message pe reply karke /close bhejo.")
         return
@@ -609,8 +660,6 @@ async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Reply kiye gaye message me Trade ID nahi mila.")
         return
 
-    tid = match.group(1).upper().replace("DL-RIZZ", "DL-RIZZ")
-    # case-sensitive rakhna hai kyunki DEALS keys yahi format use karti hain
     tid = match.group(1)
     deal = DEALS.get(tid)
 
@@ -644,14 +693,14 @@ async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_cancel:
         msg = (
             f"❌ Deal Cancelled\n"
-            f"{pe('🆔', 'check')} Trade ID: <code>{esc(tid)}</code>\n"
+            f"{pe('🆔', 'trade')} Trade ID: <code>{esc(tid)}</code>\n"
             f"{pe('ℹ️', 'check')} 100% of the charge has been deducted.\n"
             f"{pe('🛡️', 'check')} Escrowed By: {esc(closer)}"
         )
     else:
         msg = (
             f"{pe('✅', 'check')} Deal Completed\n"
-            f"{pe('🆔', 'check')} Trade ID: <code>{esc(tid)}</code>\n"
+            f"{pe('🆔', 'trade')} Trade ID: <code>{esc(tid)}</code>\n"
             f"{pe('📤', 'chart')} Released: {fmt(released_val, currency_val)}\n"
             f"{pe('🛡️', 'check')} Escrowed By: {esc(closer)}\n\n"
             f"~ {esc(deal['buyer'])} and {esc(deal['seller'])} are requested to "
@@ -667,10 +716,11 @@ async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ===========================
-# /status, /leaderboard, /deal — admin only, private chat only, silent skip warna
+# /alldeals, /leaderboard, /deal — admin only, private chat only, silent skip warna
 # ===========================
 
-async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def alldeals_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Purana '/status' — ab admin ke liye saari deals ki poori list, private-only."""
     if not admin_only_allowed(update):
         return
 
@@ -812,6 +862,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "──────────────────",
         "<b>👤 User Commands</b>",
         "/start — Dashboard kholo (private chat)",
+        "/status — Apna deal stats dekho (private ya group, kahin bhi)",
         "/add — Deal create karo (deal message pe reply karke)",
         "/close — Deal complete karo (deal message pe reply karke)",
         "/help — Ye list dikhata hai",
@@ -821,7 +872,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines += [
             "",
             "<b>🛡 Admin Commands</b> (private chat me hi kaam karenge)",
-            "/status — Saari deals ki list",
+            "/alldeals — Saari deals ki poori list",
             "/leaderboard — Today + All-time top dealer/earner",
             "/deal &lt;DL-RIZZ-N&gt; — Kisi bhi deal ki full detail dekho",
             "/admins — Bot admins ki list dekho",
@@ -878,9 +929,10 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start_cmd))
+    app.add_handler(CommandHandler("status", mystatus_cmd))
     app.add_handler(CommandHandler("add", add))
     app.add_handler(CommandHandler("close", close))
-    app.add_handler(CommandHandler("status", status_cmd))
+    app.add_handler(CommandHandler("alldeals", alldeals_cmd))
     app.add_handler(CommandHandler("leaderboard", leaderboard_cmd))
     app.add_handler(CommandHandler("deal", deal_lookup_cmd))
     app.add_handler(CommandHandler("addadmin", addadmin_cmd))
