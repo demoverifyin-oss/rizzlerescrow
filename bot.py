@@ -760,7 +760,7 @@ HOLD_ADMIN_EMOJI_ID = "5258011929993026890"
 
 
 def _hold_admin_emoji():
-    return f'<tg-emoji emoji-id="{HOLD_ADMIN_EMOJI_ID}">pe('🛡️')</tg-emoji>'
+    return pe('🛡️')
 
 
 def _is_owner(user_id):
