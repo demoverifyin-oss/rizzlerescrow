@@ -252,6 +252,7 @@ PE = {
     "📝": "5879841310902324730",
     "⏱️": "5936170807716745162",
     "📌": "5796440171364749940",
+    "🛡️": "5920052658743283381",
 }
 
 
@@ -758,7 +759,7 @@ HOLD_ADMIN_EMOJI_ID = "5258011929993026890"
 
 
 def _hold_admin_emoji():
-    return f'<tg-emoji emoji-id="{HOLD_ADMIN_EMOJI_ID}">🛡️</tg-emoji>'
+    return f'<tg-emoji emoji-id="{HOLD_ADMIN_EMOJI_ID}">pe('🛡️')</tg-emoji>'
 
 
 def _is_owner(user_id):
