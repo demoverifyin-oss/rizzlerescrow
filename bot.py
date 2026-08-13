@@ -48,6 +48,7 @@ mongo_db = mongo_client["escrow_bots"] if mongo_client else None
 coll = mongo_db["deals_rizzlerxescrow"] if mongo_db is not None else None
 meta_coll = mongo_db["meta_rizzlerxescrow"] if mongo_db is not None else None
 admins_coll = mongo_db["bot_admins_rizzlerxescrow"] if mongo_db is not None else None
+users_coll = mongo_db["broadcast_users_rizzlerxescrow"] if mongo_db is not None else None
 
 DEALS = {}
 
@@ -79,8 +80,7 @@ def is_admin(uid):
 
 
 def admin_only_allowed(update: Update):
-    """Admin commands (alldeals/leaderboard/deal/admins) sirf private chat me,
-    aur sirf hamari internal bot-admin/owner list ke liye."""
+    """Admin commands sirf private chat me, aur sirf admin/owner ke liye."""
     if update.effective_chat.type != "private":
         return False
     return is_admin(update.effective_user.id)
@@ -90,9 +90,9 @@ async def add_close_allowed(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /add aur /close ke liye permission check:
 
-    - Ye dono commands SIRF GROUP/SUPERGROUP me kaam karte hain. Private chat me
-      (chahe wo owner/bot-admin hi kyun na ho) disabled hai.
-    - Group me: us GROUP ka Telegram-level admin ya owner (creator) use kar
+    - Private chat: sirf hamari internal list wale bot-admin/owner (BOT_ADMINS / OWNER_IDS)
+      use kar sakte hai.
+    - Group / Supergroup: us GROUP ka Telegram-level admin ya owner (creator) use kar
       sakta hai — chahe wo hamari internal BOT_ADMINS list me ho ya na ho. Saath hi,
       BOT khud bhi us group me admin/owner hona chahiye, warna message delete/manage
       permission nahi milegi aur command kaam nahi karegi.
@@ -103,8 +103,10 @@ async def add_close_allowed(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     user_id = update.effective_user.id
 
+    if chat.type == "private":
+        return is_admin(user_id), None
+
     if chat.type not in ("group", "supergroup"):
-        # Private (ya kisi aur) chat me /add aur /close disabled hai.
         return False, None
 
     # 1) Bot khud us group me admin/owner hai?
@@ -130,7 +132,7 @@ async def add_close_allowed(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ===========================
-# Sequential Trade ID: DL-RIZZ-1, DL-RIZZ-2, ...
+# Sequential Trade ID: DL-RIZZLER-1, DL-RIZZLER-2, ...
 # ===========================
 
 def next_trade_id():
@@ -145,10 +147,10 @@ def next_trade_id():
     else:
         seq = len(DEALS) + 1
 
-    tid = f"DL-RIZZ-{seq}"
+    tid = f"DL-RIZZLER-{seq}"
     while tid in DEALS:  # safety, collision na ho
         seq += 1
-        tid = f"DL-RIZZ-{seq}"
+        tid = f"DL-RIZZLER-{seq}"
     return tid
 
 
@@ -228,29 +230,29 @@ def normalize_bold(text):
 #
 # Neeche di gayi IDs me se check / trade / escrow verify ho chuki hain (working).
 PE = {
-    "star1": "5181422544162391976",
-    "star2": "5258179403652801593",
-    "heart": "5260535596941582167",
-    "chat": "5258330865674494479",
-    "peach": "5323761960829862762",
-    "bolt": "5938539885907415367",
-    "globe": "6041705726206808304",
-    "fire": "5420315771991497307",
-    "chart": "5774022692642492953",
-    "coin": "5884428842780594914",
-    "money": "6039802097916974085",
-    "cash": "5893473283696759404",
-    "mobile": "6152069549442208798",
-    "zzz": "5895266423952904371",
-    "check": "5197474765387864959",    # ✅ verified working
-    "trade": "5936017305585586269",    # 🆔 verified working
-    "escrow": "5920052658743283381",   # 🛡 verified working
-    "star3": "5879785854284599288",    # ⭐ extra verified id
+    "⭐️": "5181422544162391976",
+    "❤️": "5260535596941582167",
+    "💬": "5258330865674494479",
+    "🍑": "5323761960829862762",
+    "⚡️": "5938539885907415367",
+    "🌐": "6041705726206808304",
+    "🔥": "5420315771991497307",
+    "📈": "5774022692642492953",
+    "🪙": "5884428842780594914",
+    "💰": "6039802097916974085",
+    "🤑": "5893473283696759404",
+    "📱": "6152069549442208798",
+    "💤": "5895266423952904371",
+    "✅": "5197474765387864959",
+    "🆔": "5936017305585586269",
+    "🛡": "5920052658743283381",
+    "⭐": "5879785854284599288",
 }
 
 
-def pe(emoji, key):
-    emoji_id = PE.get(key)
+def pe(emoji):
+    """Use a custom emoji only when its exact verified ID is known."""
+    emoji_id = PE.get(emoji)
     if emoji_id:
         return f'<tg-emoji emoji-id="{emoji_id}">{emoji}</tg-emoji>'
     return emoji
@@ -309,13 +311,13 @@ def back_refresh_kb(refresh_target):
 
 def welcome_text(first_name):
     return (
-        f"{pe('⭐️', 'star1')} <b>Welcome {esc(first_name)}!</b>\n"
+        f"{pe('⭐️')} <b>Welcome {esc(first_name)}!</b>\n"
         "╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍\n"
-        f"{pe('❤️', 'heart')} Escrow Bot for {BRAND}\n"
-        f"{pe('💬', 'chat')} Provided by {PROVIDER}\n\n"
-        f"{pe('🍑', 'peach')} <b>This is Your Personal Dashboard:</b>\n"
+        f"{pe('❤️')} Escrow Bot for {BRAND}\n"
+        f"{pe('💬')} Provided by {PROVIDER}\n\n"
+        f"{pe('🍑')} <b>This is Your Personal Dashboard:</b>\n"
         "╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍\n"
-        f"Select the option below {pe('⚡️', 'bolt')}\n"
+        f"Select the option below {pe('⚡️')}\n"
         "╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍"
     )
 
@@ -328,16 +330,16 @@ def global_stats_text():
         totals[cur] = totals.get(cur, 0.0) + d.get("amount", 0.0)
 
     lines = [
-        f"{pe('🌐', 'globe')} <b>Escrow Global Statistics</b>",
+        f"{pe('🌐')} <b>Escrow Global Statistics</b>",
         "──────────────────",
-        f"{pe('🔥', 'fire')} Total Deals: {len(completed)}\n",
-        f"{pe('📈', 'chart')} <b>Total Volume:</b>",
-        f"  {pe('🪙', 'coin')} - {totals['TON']:g} TON",
-        f"  {pe('💰', 'money')} - {totals['USDT']:g} USDT",
-        f"  {pe('🤑', 'cash')} - {totals['INR']:g} ₹",
+        f"{pe('🔥')} Total Deals: {len(completed)}\n",
+        f"{pe('📈')} <b>Total Volume:</b>",
+        f"  {pe('🪙')} - {totals['TON']:g} TON",
+        f"  {pe('💰')} - {totals['USDT']:g} USDT",
+        f"  {pe('🤑')} - {totals['INR']:g} ₹",
         "──────────────────",
-        f"{pe('📱', 'mobile')} Escrow Bot for {BRAND}",
-        f"{pe('💤', 'zzz')} Provided by {PROVIDER}",
+        f"{pe('📱')} Escrow Bot for {BRAND}",
+        f"{pe('💤')} Provided by {PROVIDER}",
     ]
     return "\n".join(lines)
 
@@ -393,18 +395,18 @@ def my_stats_text(update: Update):
     rank = get_rank(username, board, by="deals")
 
     return (
-        f"{pe('📈', 'chart')} <b>{esc(first_name)} Deal stats !</b>\n"
+        f"{pe('📈')} <b>{esc(first_name)} Deal stats !</b>\n"
         "──────────────────\n"
-        f"{pe('🚀', 'chart')} Rank ➤ #{rank}\n\n"
-        f"{pe('🔥', 'fire')} Active deals ➤ {len(active)}\n\n"
-        f"{pe('✅', 'check')} Total Escrow's ➤ {len(completed)}\n\n"
-        f"{pe('⚡', 'bolt')} Total Volume :\n"
-        f"  {pe('🪙', 'coin')} ➤ {totals['TON']:g} TON\n"
-        f"  {pe('💰', 'money')} ➤ {totals['USDT']:g} USDT\n"
-        f"  {pe('🤑', 'cash')} ➤ {totals['INR']:g} ₹\n"
+        f"{pe('🚀')} Rank ➤ #{rank}\n\n"
+        f"{pe('🔥')} Active deals ➤ {len(active)}\n\n"
+        f"{pe('✅')} Total Escrow's ➤ {len(completed)}\n\n"
+        f"{pe('⚡')} Total Volume :\n"
+        f"  {pe('🪙')} ➤ {totals['TON']:g} TON\n"
+        f"  {pe('💰')} ➤ {totals['USDT']:g} USDT\n"
+        f"  {pe('🤑')} ➤ {totals['INR']:g} ₹\n"
         "──────────────────\n"
-        f"{pe('📱', 'mobile')} Escrow Bot for {BRAND}\n"
-        f"{pe('💤', 'zzz')} Provided by {PROVIDER} !"
+        f"{pe('📱')} Escrow Bot for {BRAND}\n"
+        f"{pe('💤')} Provided by {PROVIDER} !"
     )
 
 
@@ -416,6 +418,7 @@ PAGE_SIZE = 6
 def deal_status_display(status):
     return {
         "ACTIVE": "🟡 PENDING",
+        "HOLD": "⏸️ HOLD",
         "COMPLETED": "✅ DONE",
         "CANCELLED": "❌ CANCELLED",
     }.get(status, status)
@@ -445,8 +448,8 @@ def deal_detail_text(tid, deal):
 
     lines += [
         "──────────────────",
-        f"{pe('📱', 'mobile')} Escrow Bot for {BRAND}",
-        f"{pe('💤', 'zzz')} Provided by {PROVIDER}",
+        f"{pe('📱')} Escrow Bot for {BRAND}",
+        f"{pe('💤')} Provided by {PROVIDER}",
     ]
     return "\n".join(lines)
 
@@ -454,7 +457,7 @@ def deal_detail_text(tid, deal):
 def my_deals_header_text(update: Update):
     first_name = update.effective_user.first_name
     return (
-        f"{pe('♡', 'heart')} <b>{esc(first_name)} All deals info !</b>\n"
+        f"{pe('♡')} <b>{esc(first_name)} All deals info !</b>\n"
         "──────────────────\n"
         "Select the deal below for info :\n"
         "──────────────────"
@@ -502,9 +505,9 @@ def pending_deals_text(update: Update):
         if d.get("escrowed_by") == username and d.get("status") == "ACTIVE"
     ]
     if not pending:
-        return f"{pe('➤', 'chart')} Koi pending deal nahi hai."
+        return f"{pe('➤')} Koi pending deal nahi hai."
 
-    lines = [f"{pe('➤', 'chart')} <b>My Pending Deals</b>", "──────────────────"]
+    lines = [f"{pe('➤')} <b>My Pending Deals</b>", "──────────────────"]
     for tid, d in pending:
         lines.append(
             f"<code>{esc(tid)}</code> — "
@@ -515,10 +518,60 @@ def pending_deals_text(update: Update):
 
 
 # ===========================
+# Broadcast subscribers
+# ===========================
+
+def remember_user(update: Update):
+    if users_coll is None or not update.effective_user:
+        return
+    u = update.effective_user
+    users_coll.update_one(
+        {"_id": u.id},
+        {"$set": {
+            "username": u.username,
+            "first_name": u.first_name,
+            "last_seen": datetime.now(timezone.utc).isoformat(),
+        }},
+        upsert=True,
+    )
+
+
+async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type != "private" or not is_admin(update.effective_user.id):
+        return
+
+    if not context.args:
+        await update.message.reply_text("Usage: /broadcast <message>")
+        return
+
+    if users_coll is None:
+        await update.message.reply_text("❌ MongoDB required for /broadcast.")
+        return
+
+    message = update.message.text.partition(" ")[2].strip()
+    if not message:
+        await update.message.reply_text("Usage: /broadcast <message>")
+        return
+
+    sent = failed = 0
+    for doc in users_coll.find({}, {"_id": 1}):
+        try:
+            await context.bot.send_message(chat_id=doc["_id"], text=message)
+            sent += 1
+        except Exception:
+            failed += 1
+
+    await update.message.reply_text(
+        f"📢 Broadcast finished.\nSent: {sent}\nFailed: {failed}"
+    )
+
+
+# ===========================
 # /start
 # ===========================
 
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    remember_user(update)
     if update.effective_chat.type != "private":
         return  # group me /start kaam nahi karega
 
@@ -600,6 +653,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def mystatus_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Har user apna khud ka status dekh sakta hai — group ho ya private, koi restriction nahi."""
+    remember_user(update)
     await update.message.reply_text(
         my_stats_text(update),
         parse_mode=ParseMode.HTML,
@@ -608,17 +662,16 @@ async def mystatus_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ===========================
-# /add — SIRF GROUP me, group ka telegram-admin/owner use kar sakta hai
-# (bot khud bhi us group me admin hona chahiye)
+# /add
 # ===========================
 
 async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     allowed, reason = await add_close_allowed(update, context)
     if not allowed:
-        if reason:
+        if reason and update.message:
             await update.message.reply_text(reason)
         return
-
+    
     raw_text = (
         update.message.reply_to_message.text
         if update.message.reply_to_message
@@ -670,16 +723,16 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_deal(tid)
 
     msg = (
-        f"{pe('💰', 'money')} Deal Amount: {fmt(amount_val, currency_val)}\n"
-        f"{pe('📤', 'chart')} Release/Refund Amount: {fmt(release_val, currency_val)}\n"
-        f"{pe('🆔', 'trade')} Trade ID: <code>{esc(tid)}</code>\n\n"
-        f"<b>Continue the Deal</b>\n"
-        f"Buyer: {esc(buyer_val)}\n"
-        f"Seller: {esc(seller_val)}\n"
-        f"Detail: {esc(detail_val)}\n"
-        f"Expected Time: {esc(exp_time_val)}\n"
-        f"T/C: {esc(tc_val)}\n\n"
-        f"{pe('🛡', 'check')} Escrowed By: {esc(creator_username)}"
+        f"{pe('💰')} <b>Deal Amount:</b> {fmt(amount_val, currency_val)}\n"
+        f"{pe('📤')} <b>Fee:</b> {fee_percent:.2f}% — {fmt(fee_amount, currency_val)}\n"
+        f"{pe('📤')} <b>Net Release:</b> {fmt(release_val, currency_val)}\n"
+        f"{pe('🆔')} <b>Trade ID:</b> <code>{esc(tid)}</code>\n\n"
+        f"<b>👤 Buyer:</b> {esc(buyer_val)}\n"
+        f"<b>👤 Seller:</b> {esc(seller_val)}\n"
+        f"<b>📝 Detail:</b> {esc(detail_val)}\n"
+        f"<b>⏱ Expected Time:</b> {esc(exp_time_val)}\n"
+        f"<b>📌 T/C:</b> {esc(tc_val)}\n\n"
+        f"{pe('🛡')} <b>Escrowed By:</b> {esc(creator_username)}"
     )
 
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
@@ -690,23 +743,105 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ===========================
-# /close — SIRF GROUP me, group ka telegram-admin/owner use kar sakta hai
-# (bot khud bhi us group me admin hona chahiye)
+# /hold + /unhold
 # ===========================
 
-async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def replied_trade_id(update: Update):
+    if not update.message or not update.message.reply_to_message:
+        return None
+    reply_text = update.message.reply_to_message.text or ""
+    m = re.search(r"Trade ID:\s*(DL-RIZZLER-\d+)", reply_text, re.IGNORECASE)
+    return m.group(1).upper() if m else None
+
+
+async def hold_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     allowed, reason = await add_close_allowed(update, context)
     if not allowed:
         if reason:
             await update.message.reply_text(reason)
         return
 
+    tid = replied_trade_id(update)
+    if not tid:
+        await update.message.reply_text("❌ Deal message par reply karke /hold bhejo.")
+        return
+
+    deal = DEALS.get(tid)
+    if not deal:
+        await update.message.reply_text("❌ Deal not found.")
+        return
+    if deal.get("status") == "HOLD":
+        await update.message.reply_text("⏸️ Yeh deal already hold par hai.")
+        return
+    if deal.get("status") != "ACTIVE":
+        await update.message.reply_text("❌ Sirf active deal ko hold kiya ja sakta hai.")
+        return
+
+    deal["status"] = "HOLD"
+    deal["hold_at"] = datetime.now(timezone.utc).isoformat()
+    deal["held_by"] = resolve_username(update)
+    save_deal(tid)
+
+    await update.message.reply_text(
+        f"⏸️ <b>Deal On Hold</b>\n"
+        f"{pe('🆔')} Trade ID: <code>{esc(tid)}</code>\n"
+        f"<b>Buyer:</b> {esc(deal.get('buyer', '-'))}\n"
+        f"<b>Seller:</b> {esc(deal.get('seller', '-'))}\n"
+        f"{pe('🛡')} <b>Held By:</b> {esc(deal['held_by'])}",
+        parse_mode=ParseMode.HTML,
+    )
+
+
+async def unhold_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    allowed, reason = await add_close_allowed(update, context)
+    if not allowed:
+        if reason:
+            await update.message.reply_text(reason)
+        return
+
+    tid = replied_trade_id(update)
+    if not tid:
+        await update.message.reply_text("❌ Deal message par reply karke /unhold bhejo.")
+        return
+
+    deal = DEALS.get(tid)
+    if not deal:
+        await update.message.reply_text("❌ Deal not found.")
+        return
+    if deal.get("status") != "HOLD":
+        await update.message.reply_text("❌ Yeh deal hold par nahi hai.")
+        return
+
+    deal["status"] = "ACTIVE"
+    deal["unhold_at"] = datetime.now(timezone.utc).isoformat()
+    deal["unheld_by"] = resolve_username(update)
+    save_deal(tid)
+
+    await update.message.reply_text(
+        f"▶️ <b>Deal Hold Removed</b>\n"
+        f"{pe('🆔')} Trade ID: <code>{esc(tid)}</code>\n"
+        f"{pe('🛡')} <b>Unheld By:</b> {esc(deal['unheld_by'])}",
+        parse_mode=ParseMode.HTML,
+    )
+
+
+# ===========================
+# /close
+# ===========================
+
+async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    allowed, reason = await add_close_allowed(update, context)
+    if not allowed:
+        if reason and update.message:
+            await update.message.reply_text(reason)
+        return
+    
     if not update.message.reply_to_message:
         await update.message.reply_text("❌ Us deal ke message pe reply karke /close bhejo.")
         return
 
     reply_text = update.message.reply_to_message.text or ""
-    match = re.search(r"Trade ID:\s*(DL-RIZZ-\d+)", reply_text, re.IGNORECASE)
+    match = re.search(r"Trade ID:\s*(DL-RIZZLER-\d+)", reply_text, re.IGNORECASE)
 
     if not match:
         await update.message.reply_text("❌ Reply kiye gaye message me Trade ID nahi mila.")
@@ -717,6 +852,10 @@ async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not deal:
         await update.message.reply_text("❌ Deal not found.")
+        return
+
+    if deal["status"] == "HOLD":
+        await update.message.reply_text("⏸️ Yeh deal HOLD par hai. Pehle /unhold karo.")
         return
 
     if deal["status"] != "ACTIVE":
@@ -745,16 +884,16 @@ async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_cancel:
         msg = (
             f"❌ Deal Cancelled\n"
-            f"{pe('🆔', 'trade')} Trade ID: <code>{esc(tid)}</code>\n"
-            f"{pe('ℹ️', 'check')} 100% of the charge has been deducted.\n"
-            f"{pe('🛡️', 'check')} Escrowed By: {esc(closer)}"
+            f"{pe('🆔')} Trade ID: <code>{esc(tid)}</code>\n"
+            f"{pe('ℹ️')} 100% of the charge has been deducted.\n"
+            f"{pe('🛡️')} Escrowed By: {esc(closer)}"
         )
     else:
         msg = (
-            f"{pe('✅', 'check')} Deal Completed\n"
-            f"{pe('🆔', 'trade')} Trade ID: <code>{esc(tid)}</code>\n"
-            f"{pe('📤', 'chart')} Released: {fmt(released_val, currency_val)}\n"
-            f"{pe('🛡️', 'check')} Escrowed By: {esc(closer)}\n\n"
+            f"{pe('✅')} Deal Completed\n"
+            f"{pe('🆔')} Trade ID: <code>{esc(tid)}</code>\n"
+            f"{pe('📤')} Released: {fmt(released_val, currency_val)}\n"
+            f"{pe('🛡️')} Escrowed By: {esc(closer)}\n\n"
             f"~ {esc(deal['buyer'])} and {esc(deal['seller'])} are requested to "
             f"drop the vouch before leaving👇🏻\n\n"
             f"<code>Vouch @rizzlerxescrow for {fmt(released_val, currency_val)} smooth escrow deal❤️</code>\n\n"
@@ -805,7 +944,7 @@ async def leaderboard_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return f"  {esc(top_user)} — {stats['deals']} deals, ₹{stats['volume']:,.2f}"
 
     msg = (
-        f"{pe('🏆', 'check')} <b>Leaderboard</b>\n"
+        f"{pe('🏆')} <b>Leaderboard</b>\n"
         "──────────────────\n"
         f"<b>📅 Today</b>\n"
         f"🔥 Top Dealer (most deals):\n{top_line(today_board, 'deals')}\n"
@@ -819,12 +958,12 @@ async def leaderboard_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def deal_lookup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/deal DL-RIZZ-5 -> admin kisi bhi deal ki full detail (escrowed_by samet) dekh sakta hai."""
+    """/deal DL-RIZZLER-5 -> admin kisi bhi deal ki full detail (escrowed_by samet) dekh sakta hai."""
     if not admin_only_allowed(update):
         return
 
     if not context.args:
-        await update.message.reply_text("Usage: <code>/deal DL-RIZZ-5</code>", parse_mode=ParseMode.HTML)
+        await update.message.reply_text("Usage: <code>/deal DL-RIZZLER-5</code>", parse_mode=ParseMode.HTML)
         return
 
     tid = context.args[0].upper()
@@ -894,43 +1033,41 @@ async def admins_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not admin_only_allowed(update):
         return
 
-    lines = [f"{pe('👑', 'check')} <b>Owners</b>"]
+    lines = [f"{pe('👑')} <b>Owners</b>"]
     lines += [f"  <code>{uid}</code>" for uid in OWNER_IDS] or ["  (koi owner set nahi hai)"]
     extra_admins = BOT_ADMINS - OWNER_IDS
-    lines.append(f"\n{pe('🛡', 'check')} <b>Bot Admins</b>")
+    lines.append(f"\n{pe('🛡')} <b>Bot Admins</b>")
     lines += [f"  <code>{uid}</code>" for uid in extra_admins] or ["  (koi extra admin nahi hai)"]
 
     await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
 
 
 # ===========================
-# /help — sabko user commands, admin/owner ko extra sections bhi
+# /help — admin/owner ko sab commands, normal user ko sirf user commands
 # ===========================
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     lines = [
-        f"{pe('📖', 'check')} <b>Commands</b>",
+        f"{pe('📖')} <b>Commands</b>",
         "──────────────────",
         "<b>👤 User Commands</b>",
         "/start — Dashboard kholo (private chat)",
         "/status — Apna deal stats dekho (private ya group, kahin bhi)",
+        "/add — Deal create karo (deal message pe reply karke)",
+        "/close — Deal complete karo (deal message pe reply karke)",
         "/help — Ye list dikhata hai",
-        "",
-        "<b>🛡 Group Admin Commands</b> (sirf group me kaam karenge)",
-        "/add — Deal create karo (deal message pe reply karke). Sirf tab kaam karega "
-        "jab tum us group ke Telegram admin/owner ho AUR bot khud bhi group me admin ho.",
-        "/close — Deal complete/cancel karo (deal message pe reply karke). Same condition.",
     ]
 
     if is_admin(uid):
         lines += [
             "",
-            "<b>🛡 Bot Admin Commands</b> (private chat me hi kaam karenge)",
+            "<b>🛡 Admin Commands</b> (private chat me hi kaam karenge)",
             "/alldeals — Saari deals ki poori list",
             "/leaderboard — Today + All-time top dealer/earner",
-            "/deal &lt;DL-RIZZ-N&gt; — Kisi bhi deal ki full detail dekho",
+            "/deal &lt;DL-RIZZLER-N&gt; — Kisi bhi deal ki full detail dekho",
             "/admins — Bot admins ki list dekho",
+            "/broadcast <message> — Private subscribers ko broadcast",
         ]
 
     if is_owner(uid):
@@ -987,6 +1124,9 @@ def main():
     app.add_handler(CommandHandler("status", mystatus_cmd))
     app.add_handler(CommandHandler("add", add))
     app.add_handler(CommandHandler("close", close))
+    app.add_handler(CommandHandler("hold", hold_cmd))
+    app.add_handler(CommandHandler("unhold", unhold_cmd))
+    app.add_handler(CommandHandler("broadcast", broadcast_cmd))
     app.add_handler(CommandHandler("alldeals", alldeals_cmd))
     app.add_handler(CommandHandler("leaderboard", leaderboard_cmd))
     app.add_handler(CommandHandler("deal", deal_lookup_cmd))
