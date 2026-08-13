@@ -251,7 +251,7 @@ PE = {
 
 
 def pe(emoji):
-    """Use a custom emoji only when its exact verified ID is known."""
+    """Return a Telegram custom emoji tag only for verified IDs."""
     emoji_id = PE.get(emoji)
     if emoji_id:
         return f'<tg-emoji emoji-id="{emoji_id}">{emoji}</tg-emoji>'
@@ -679,13 +679,16 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     text = normalize_bold(raw_text)
 
-    seller = re.search(r"SELLER\s*:\s*(.*)", text, re.IGNORECASE)
-    buyer = re.search(r"BUYER\s*:\s*(.*)", text, re.IGNORECASE)
-    detail = re.search(r"DEAL DETAIL\s*:\s*(.*)", text, re.IGNORECASE)
-    amount = re.search(r"DEAL AMOUNT\s*:\s*(.*)", text, re.IGNORECASE)
-    exp_time = re.search(r"EXPECTED TIME TO COMPLETE DEAL\s*:\s*(.*)", text, re.IGNORECASE)
-    tc = re.search(r"T\s*/\s*C\s*(?:\(IF ANY\))?\s*:\s*(.*)", text, re.IGNORECASE)
-    currency = re.search(r"CURRENCY\s*:\s*(\w+)", text, re.IGNORECASE)
+    # Deal template uses a bullet before every field:
+    # "• SELLER : @username". Allow that bullet (and whitespace) explicitly.
+    field_prefix = r"(?:^|\n)\s*(?:[•·▪▫●○‣➜➤-]\s*)?"
+    seller = re.search(field_prefix + r"SELLER\s*:\s*(.*?)\s*(?:\n|$)", text, re.IGNORECASE)
+    buyer = re.search(field_prefix + r"BUYER\s*:\s*(.*?)\s*(?:\n|$)", text, re.IGNORECASE)
+    detail = re.search(field_prefix + r"DEAL\s+DETAIL\s*:\s*(.*?)\s*(?:\n|$)", text, re.IGNORECASE)
+    amount = re.search(field_prefix + r"DEAL\s+AMOUNT\s*:\s*(.*?)\s*(?:\n|$)", text, re.IGNORECASE)
+    exp_time = re.search(field_prefix + r"EXPECTED\s+TIME\s+TO\s+COMPLETE\s+DEAL\s*:\s*(.*?)\s*(?:\n|$)", text, re.IGNORECASE)
+    tc = re.search(field_prefix + r"T\s*/\s*C\s*(?:\(\s*IF\s+ANY\s*\))?\s*:\s*(.*?)\s*(?:\n|$)", text, re.IGNORECASE)
+    currency = re.search(field_prefix + r"CURRENCY\s*:\s*(.*?)\s*(?:\n|$)", text, re.IGNORECASE)
 
     seller_val = seller.group(1).strip() if seller else "-"
     buyer_val = buyer.group(1).strip() if buyer else "-"
@@ -743,84 +746,90 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ===========================
-# /hold + /unhold
+# /hold — owner-only admin hold report
 # ===========================
 
-def replied_trade_id(update: Update):
-    if not update.message or not update.message.reply_to_message:
-        return None
-    reply_text = update.message.reply_to_message.text or ""
-    m = re.search(r"Trade ID:\s*(DL-RIZZLER-\d+)", reply_text, re.IGNORECASE)
-    return m.group(1).upper() if m else None
+HOLD_ADMIN_EMOJI_ID = "5258011929993026890"
+
+
+def _hold_admin_emoji():
+    return f'<tg-emoji emoji-id="{HOLD_ADMIN_EMOJI_ID}">🛡️</tg-emoji>'
+
+
+def _is_owner(user_id):
+    return user_id in OWNER_IDS
 
 
 async def hold_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    allowed, reason = await add_close_allowed(update, context)
-    if not allowed:
-        if reason:
-            await update.message.reply_text(reason)
+    """
+    Owner-only admin hold report.
+
+    Shows every bot admin's currently open (ACTIVE) deal amount.
+    /close removes the deal from this report automatically because its
+    status changes to COMPLETED/CANCELLED.
+    Non-owner users get no response.
+    """
+    if not update.effective_user or not _is_owner(update.effective_user.id):
         return
 
-    tid = replied_trade_id(update)
-    if not tid:
-        await update.message.reply_text("❌ Deal message par reply karke /hold bhejo.")
-        return
+    # Only the owner can use this command, regardless of chat type.
+    open_deals = [
+        (tid, deal) for tid, deal in DEALS.items()
+        if deal.get("status") == "ACTIVE"
+    ]
 
-    deal = DEALS.get(tid)
-    if not deal:
-        await update.message.reply_text("❌ Deal not found.")
-        return
-    if deal.get("status") == "HOLD":
-        await update.message.reply_text("⏸️ Yeh deal already hold par hai.")
-        return
-    if deal.get("status") != "ACTIVE":
-        await update.message.reply_text("❌ Sirf active deal ko hold kiya ja sakta hai.")
-        return
+    # Group ACTIVE deals by the admin/escrower who created them.
+    grouped = {}
+    for tid, deal in open_deals:
+        admin = deal.get("escrowed_by") or deal.get("created_by") or "-"
+        grouped.setdefault(admin, []).append((tid, deal))
 
-    deal["status"] = "HOLD"
-    deal["hold_at"] = datetime.now(timezone.utc).isoformat()
-    deal["held_by"] = resolve_username(update)
-    save_deal(tid)
+    lines = [
+        f"{_hold_admin_emoji()} <b>ADMIN HOLD</b>",
+        "",
+    ]
+
+    if not grouped:
+        lines.append("No active deals are currently on hold.")
+    else:
+        grand_total = 0.0
+
+        for admin in sorted(grouped, key=lambda x: x.lower()):
+            deals = grouped[admin]
+            admin_total = sum(float(d.get("amount", 0) or 0) for _, d in deals)
+            grand_total += admin_total
+
+            lines.append(
+                f"{_hold_admin_emoji()} <b>{esc(admin)}</b> — "
+                f"<b>Total Hold: {fmt(admin_total, 'INR')}</b>"
+            )
+
+            for tid, deal in deals:
+                amount = float(deal.get("amount", 0) or 0)
+                currency = deal.get("currency", "INR")
+                buyer = esc(deal.get("buyer", "-"))
+                seller = esc(deal.get("seller", "-"))
+                detail = esc(deal.get("detail", "-"))
+                fee = float(deal.get("fee_percent", 0) or 0)
+                release = float(deal.get("release", 0) or 0)
+
+                lines.extend([
+                    f"  • <code>{esc(tid)}</code> — <b>{fmt(amount, currency)}</b>",
+                    f"    Buyer: {buyer}",
+                    f"    Seller: {seller}",
+                    f"    Fee: {fee:.2f}% — Net: {fmt(release, currency)}",
+                    f"    Detail: {detail}",
+                ])
+            lines.append("")
+
+        lines.append("──────────────────")
+        lines.append(
+            f"{_hold_admin_emoji()} <b>ALL ADMINS TOTAL HOLD: "
+            f"{fmt(grand_total, 'INR')}</b>"
+        )
 
     await update.message.reply_text(
-        f"⏸️ <b>Deal On Hold</b>\n"
-        f"{pe('🆔')} Trade ID: <code>{esc(tid)}</code>\n"
-        f"<b>Buyer:</b> {esc(deal.get('buyer', '-'))}\n"
-        f"<b>Seller:</b> {esc(deal.get('seller', '-'))}\n"
-        f"{pe('🛡')} <b>Held By:</b> {esc(deal['held_by'])}",
-        parse_mode=ParseMode.HTML,
-    )
-
-
-async def unhold_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    allowed, reason = await add_close_allowed(update, context)
-    if not allowed:
-        if reason:
-            await update.message.reply_text(reason)
-        return
-
-    tid = replied_trade_id(update)
-    if not tid:
-        await update.message.reply_text("❌ Deal message par reply karke /unhold bhejo.")
-        return
-
-    deal = DEALS.get(tid)
-    if not deal:
-        await update.message.reply_text("❌ Deal not found.")
-        return
-    if deal.get("status") != "HOLD":
-        await update.message.reply_text("❌ Yeh deal hold par nahi hai.")
-        return
-
-    deal["status"] = "ACTIVE"
-    deal["unhold_at"] = datetime.now(timezone.utc).isoformat()
-    deal["unheld_by"] = resolve_username(update)
-    save_deal(tid)
-
-    await update.message.reply_text(
-        f"▶️ <b>Deal Hold Removed</b>\n"
-        f"{pe('🆔')} Trade ID: <code>{esc(tid)}</code>\n"
-        f"{pe('🛡')} <b>Unheld By:</b> {esc(deal['unheld_by'])}",
+        "\n".join(lines),
         parse_mode=ParseMode.HTML,
     )
 
@@ -1125,7 +1134,6 @@ def main():
     app.add_handler(CommandHandler("add", add))
     app.add_handler(CommandHandler("close", close))
     app.add_handler(CommandHandler("hold", hold_cmd))
-    app.add_handler(CommandHandler("unhold", unhold_cmd))
     app.add_handler(CommandHandler("broadcast", broadcast_cmd))
     app.add_handler(CommandHandler("alldeals", alldeals_cmd))
     app.add_handler(CommandHandler("leaderboard", leaderboard_cmd))
