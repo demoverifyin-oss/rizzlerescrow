@@ -79,10 +79,54 @@ def is_admin(uid):
 
 
 def admin_only_allowed(update: Update):
-    """Admin commands sirf private chat me, aur sirf admin/owner ke liye."""
+    """Admin commands (alldeals/leaderboard/deal/admins) sirf private chat me,
+    aur sirf hamari internal bot-admin/owner list ke liye."""
     if update.effective_chat.type != "private":
         return False
     return is_admin(update.effective_user.id)
+
+
+async def add_close_allowed(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /add aur /close ke liye permission check:
+
+    - Ye dono commands SIRF GROUP/SUPERGROUP me kaam karte hain. Private chat me
+      (chahe wo owner/bot-admin hi kyun na ho) disabled hai.
+    - Group me: us GROUP ka Telegram-level admin ya owner (creator) use kar
+      sakta hai — chahe wo hamari internal BOT_ADMINS list me ho ya na ho. Saath hi,
+      BOT khud bhi us group me admin/owner hona chahiye, warna message delete/manage
+      permission nahi milegi aur command kaam nahi karegi.
+
+    Return: (allowed: bool, reason: str | None)
+    reason sirf tab bheja jaata hai jab helpful diagnostic dena ho (warna silent skip).
+    """
+    chat = update.effective_chat
+    user_id = update.effective_user.id
+
+    if chat.type not in ("group", "supergroup"):
+        # Private (ya kisi aur) chat me /add aur /close disabled hai.
+        return False, None
+
+    # 1) Bot khud us group me admin/owner hai?
+    try:
+        bot_member = await context.bot.get_chat_member(chat.id, context.bot.id)
+    except Exception:
+        return False, "❌ Bot ka admin status is group me check nahi ho paaya."
+    if bot_member.status not in ("administrator", "creator"):
+        return False, (
+            "❌ Ye command tabhi kaam karegi jab BOT is group me Admin ho "
+            "(pehle bot ko group me admin banao)."
+        )
+
+    # 2) Command chalane wala us group ka admin/owner hai?
+    try:
+        user_member = await context.bot.get_chat_member(chat.id, user_id)
+    except Exception:
+        return False, "❌ Tumhara admin status is group me check nahi ho paaya."
+    if user_member.status not in ("administrator", "creator"):
+        return False, None  # normal member ke liye silent skip
+
+    return True, None
 
 
 # ===========================
@@ -564,13 +608,17 @@ async def mystatus_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ===========================
-# /add
+# /add — SIRF GROUP me, group ka telegram-admin/owner use kar sakta hai
+# (bot khud bhi us group me admin hona chahiye)
 # ===========================
 
 async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not admin_only_allowed(update):
-            return
-    
+    allowed, reason = await add_close_allowed(update, context)
+    if not allowed:
+        if reason:
+            await update.message.reply_text(reason)
+        return
+
     raw_text = (
         update.message.reply_to_message.text
         if update.message.reply_to_message
@@ -642,13 +690,17 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ===========================
-# /close
+# /close — SIRF GROUP me, group ka telegram-admin/owner use kar sakta hai
+# (bot khud bhi us group me admin hona chahiye)
 # ===========================
 
 async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not admin_only_allowed(update):
-            return
-    
+    allowed, reason = await add_close_allowed(update, context)
+    if not allowed:
+        if reason:
+            await update.message.reply_text(reason)
+        return
+
     if not update.message.reply_to_message:
         await update.message.reply_text("❌ Us deal ke message pe reply karke /close bhejo.")
         return
@@ -852,7 +904,7 @@ async def admins_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ===========================
-# /help — admin/owner ko sab commands, normal user ko sirf user commands
+# /help — sabko user commands, admin/owner ko extra sections bhi
 # ===========================
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -863,15 +915,18 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<b>👤 User Commands</b>",
         "/start — Dashboard kholo (private chat)",
         "/status — Apna deal stats dekho (private ya group, kahin bhi)",
-        "/add — Deal create karo (deal message pe reply karke)",
-        "/close — Deal complete karo (deal message pe reply karke)",
         "/help — Ye list dikhata hai",
+        "",
+        "<b>🛡 Group Admin Commands</b> (sirf group me kaam karenge)",
+        "/add — Deal create karo (deal message pe reply karke). Sirf tab kaam karega "
+        "jab tum us group ke Telegram admin/owner ho AUR bot khud bhi group me admin ho.",
+        "/close — Deal complete/cancel karo (deal message pe reply karke). Same condition.",
     ]
 
     if is_admin(uid):
         lines += [
             "",
-            "<b>🛡 Admin Commands</b> (private chat me hi kaam karenge)",
+            "<b>🛡 Bot Admin Commands</b> (private chat me hi kaam karenge)",
             "/alldeals — Saari deals ki poori list",
             "/leaderboard — Today + All-time top dealer/earner",
             "/deal &lt;DL-RIZZ-N&gt; — Kisi bhi deal ki full detail dekho",
