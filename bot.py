@@ -629,6 +629,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await query.edit_message_text(
             deal_detail_text(tid, deal),
+            parse_mode=ParseMode.HTML,
             reply_markup=deal_view_kb(int(page)),
         )
         return
