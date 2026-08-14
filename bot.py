@@ -781,7 +781,7 @@ async def hold_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status changes to COMPLETED/CANCELLED.
     Non-owner users get no response.
     """
-    if not update.effective_user or not _is_owner(update.effective_user.id):
+    if not update.effective_user or not is_admin(update.effective_user.id):
         return
 
     # Only the owner can use this command, regardless of chat type.
