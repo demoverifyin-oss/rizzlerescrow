@@ -1004,10 +1004,15 @@ async def addadmin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private" or not is_owner(update.effective_user.id):
         return
 
+    target_user = None
+
     if update.message.reply_to_message:
-        target_id = update.message.reply_to_message.from_user.id
+        target_user = update.message.reply_to_message.from_user
+        target_id = target_user.id
+
     elif context.args and context.args[0].isdigit():
         target_id = int(context.args[0])
+
     else:
         await update.message.reply_text(
             "Usage: kisi user ke message pe reply karke /addadmin bhejo, "
@@ -1017,13 +1022,30 @@ async def addadmin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     BOT_ADMINS.add(target_id)
+
+    admin_data = {
+        "added_by": update.effective_user.id,
+    }
+
+    # Reply se add karne par user's real Telegram details save hongi
+    if target_user:
+        admin_data.update({
+            "username": target_user.username,
+            "first_name": target_user.first_name,
+            "last_name": target_user.last_name,
+        })
+
     if admins_coll is not None:
         admins_coll.update_one(
             {"_id": target_id},
-            {"$set": {"added_by": update.effective_user.id}},
+            {"$set": admin_data},
             upsert=True,
         )
-    await update.message.reply_text(f"✅ <code>{target_id}</code> ab bot admin hai.", parse_mode=ParseMode.HTML)
+
+    await update.message.reply_text(
+        f"✅ <code>{target_id}</code> ab bot admin hai.",
+        parse_mode=ParseMode.HTML,
+    )
 
 
 async def removeadmin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1055,6 +1077,7 @@ async def admins_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     lines = [f"{pe('👑')} <b>Owners</b>"]
+
     lines += [
         f"  <code>{uid}</code>"
         for uid in sorted(OWNER_IDS)
@@ -1066,20 +1089,26 @@ async def admins_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not extra_admins:
         lines.append("  (koi extra admin nahi hai)")
+
     else:
         for uid in sorted(extra_admins):
-            # Existing ADMIN_ALIASES dict se username lo
+
+            # Alias se username nikalo
             username = ADMIN_ALIASES.get(uid)
 
             if username:
-                # Username clickable + ID side me
+                # @ aur _ hata kar readable name banao
+                display_name = username.replace("_", " ").title()
+
+                # Clickable name + ID
                 lines.append(
                     f'  • <a href="https://t.me/{esc(username)}">'
-                    f'@{esc(username)}</a> '
+                    f'{esc(display_name)}</a> '
                     f'<code>({uid})</code>'
                 )
+
             else:
-                # Username alias me nahi hai to ID fallback
+                # Alias nahi hai to clickable fallback
                 lines.append(
                     f'  • <a href="tg://user?id={uid}">Admin</a> '
                     f'<code>({uid})</code>'
@@ -1090,7 +1119,6 @@ async def admins_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML,
         disable_web_page_preview=True,
     )
-
 
 # ===========================
 # /help — admin/owner ko sab commands, normal user ko sirf user commands
