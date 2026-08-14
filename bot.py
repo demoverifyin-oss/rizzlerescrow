@@ -113,8 +113,8 @@ async def add_close_allowed(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         bot_member = await context.bot.get_chat_member(chat.id, context.bot.id)
     except Exception:
-        return False, "❌ Bot ka admin stats is group me check nahi ho paaya."
-    if bot_member.stats not in ("administrator", "creator"):
+        return False, "❌ Bot ka admin status is group me check nahi ho paaya."
+    if bot_member.status not in ("administrator", "creator"):
         return False, (
             "❌ Ye command tabhi kaam karegi jab BOT is group me Admin ho "
             "(pehle bot ko group me admin banao)."
@@ -124,8 +124,8 @@ async def add_close_allowed(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_member = await context.bot.get_chat_member(chat.id, user_id)
     except Exception:
-        return False, "❌ Tumhara admin stats is group me check nahi ho paaya."
-    if user_member.stats not in ("administrator", "creator"):
+        return False, "❌ Tumhara admin status is group me check nahi ho paaya."
+    if user_member.status not in ("administrator", "creator"):
         return False, None  # normal member ke liye silent skip
 
     return True, None
@@ -294,20 +294,20 @@ def calculate_fee(amount, is_exchange=False):
 
 def main_menu_kb():
     rows = [
-        [InlineKeyboardButton("✦ My Stats", callback_data="menu:my_stats")],
+        [InlineKeyboardButton("✦ My status", callback_data="menu:my_status")],
         [InlineKeyboardButton("★ My Deals Info", callback_data="menu:my_deals")],
         [InlineKeyboardButton("➤ My Pending Deals", callback_data="menu:pending")],
-        [InlineKeyboardButton("✓ Escrow Global Stats", callback_data="menu:global")],
+        [InlineKeyboardButton("✓ Escrow Global status", callback_data="menu:global")],
     ]
     return InlineKeyboardMarkup(rows)
 
 
-def stats_kb():
-    """Keyboard jo /stats ke saath jaata hai — private aur group dono me kaam karta hai."""
+def status_kb():
+    """Keyboard jo /status ke saath jaata hai — private aur group dono me kaam karta hai."""
     rows = [
         [InlineKeyboardButton("★ My Deals Info", callback_data="menu:my_deals")],
         [InlineKeyboardButton("➤ My Pending Deals", callback_data="menu:pending")],
-        [InlineKeyboardButton("🔄 Refresh", callback_data="refresh:my_stats")],
+        [InlineKeyboardButton("🔄 Refresh", callback_data="refresh:my_status")],
     ]
     return InlineKeyboardMarkup(rows)
 
@@ -333,8 +333,8 @@ def welcome_text(first_name):
     )
 
 
-def global_stats_text():
-    completed = [d for d in DEALS.values() if d.get("stats") == "COMPLETED"]
+def global_status_text():
+    completed = [d for d in DEALS.values() if d.get("status") == "COMPLETED"]
     totals = {"TON": 0.0, "USDT": 0.0, "INR": 0.0}
     for d in completed:
         cur = d.get("currency", "INR")
@@ -344,7 +344,7 @@ def global_stats_text():
         f"{pe('🌐')} <b>Escrow Global Statistics</b>",
         "──────────────────",
         f"{pe('🔥')} Total Deals: {len(completed)}\n",
-        f"{pe('📈')} <b>Total Volume:</b>",
+        f"{pe('⚡️')} <b>Total Volume:</b>",
         f"  {pe('🪙')} - {totals['TON']:g} TON",
         f"  {pe('💰')} - {totals['USDT']:g} USDT",
         f"  {pe('🤑')} - {totals['INR']:g} ₹",
@@ -370,7 +370,7 @@ def _is_today(iso_ts):
 def build_leaderboard(today_only=False):
     board = {}
     for d in DEALS.values():
-        if d.get("stats") != "COMPLETED":
+        if d.get("status") != "COMPLETED":
             continue
         if today_only and not _is_today(d.get("completed_at")):
             continue
@@ -389,13 +389,13 @@ def get_rank(username, board, by="deals"):
     return len(ranked) + 1
 
 
-def my_stats_text(update: Update):
+def my_status_text(update: Update):
     username = resolve_username(update)
     first_name = update.effective_user.first_name
 
     mine = [d for d in DEALS.values() if d.get("escrowed_by") == username]
-    completed = [d for d in mine if d.get("stats") == "COMPLETED"]
-    active = [d for d in mine if d.get("stats") == "ACTIVE"]
+    completed = [d for d in mine if d.get("status") == "COMPLETED"]
+    active = [d for d in mine if d.get("status") == "ACTIVE"]
 
     totals = {"TON": 0.0, "USDT": 0.0, "INR": 0.0}
     for d in completed:
@@ -406,7 +406,7 @@ def my_stats_text(update: Update):
     rank = get_rank(username, board, by="deals")
 
     return (
-        f"{pe('📈')} <b>{esc(first_name)} Deal stats !</b>\n"
+        f"{pe('📈')} <b>{esc(first_name)} Deal status !</b>\n"
         "──────────────────\n"
         f"{pe('🚀')} Rank ➤ #{rank}\n\n"
         f"{pe('🔥')} Active deals ➤ {len(active)}\n\n"
@@ -426,20 +426,20 @@ def my_stats_text(update: Update):
 PAGE_SIZE = 6
 
 
-def deal_stats_display(stats):
+def deal_status_display(status):
     return {
         "ACTIVE": "🟡 PENDING",
         "HOLD": "⏸️ HOLD",
         "COMPLETED": "✅ DONE",
         "CANCELLED": "❌ CANCELLED",
-    }.get(stats, stats)
+    }.get(status, status)
 
 
 def deal_detail_text(tid, deal):
     lines = [
         f"Your Deal-{esc(tid)} Info !",
         "──────────────────",
-        f"➥ stats: {deal_stats_display(deal.get('stats', '-'))}",
+        f"➥ status: {deal_status_display(deal.get('status', '-'))}",
         f"➥ Buyer: {esc(deal.get('buyer', '-'))}",
         f"➥ Seller: {esc(deal.get('seller', '-'))}",
         f"➥ Amount: {fmt(deal.get('amount', 0), deal.get('currency', 'INR'))}",
@@ -513,7 +513,7 @@ def pending_deals_text(update: Update):
     pending = [
         (tid, d)
         for tid, d in DEALS.items()
-        if d.get("escrowed_by") == username and d.get("stats") == "ACTIVE"
+        if d.get("escrowed_by") == username and d.get("status") == "ACTIVE"
     ]
     if not pending:
         return f"{pe('➤')} Koi pending deal nahi hai."
@@ -599,7 +599,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     if data == "menu:back":
-        # Private me full dashboard, group me wapas apne stats pe.
+        # Private me full dashboard, group me wapas apne status pe.
         if update.effective_chat.type == "private":
             await query.edit_message_text(
                 welcome_text(update.effective_user.first_name),
@@ -608,9 +608,9 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             await query.edit_message_text(
-                my_stats_text(update),
+                my_status_text(update),
                 parse_mode=ParseMode.HTML,
-                reply_markup=stats_kb(),
+                reply_markup=status_kb(),
             )
         return
 
@@ -640,15 +640,15 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     target = None
-    if data in ("menu:my_stats", "refresh:my_stats"):
-        target = "my_stats"
-        text = my_stats_text(update)
+    if data in ("menu:my_status", "refresh:my_status"):
+        target = "my_status"
+        text = my_status_text(update)
     elif data in ("menu:pending", "refresh:pending"):
         target = "pending"
         text = pending_deals_text(update)
     elif data in ("menu:global", "refresh:global"):
         target = "global"
-        text = global_stats_text()
+        text = global_status_text()
     else:
         return
 
@@ -660,16 +660,16 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ===========================
-# /stats  — HAR USER, PRIVATE + GROUP dono me kaam karega
+# /status  — HAR USER, PRIVATE + GROUP dono me kaam karega
 # ===========================
 
-async def mystats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Har user apna khud ka stats dekh sakta hai — group ho ya private, koi restriction nahi."""
+async def mystatus_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Har user apna khud ka status dekh sakta hai — group ho ya private, koi restriction nahi."""
     remember_user(update)
     await update.message.reply_text(
-        my_stats_text(update),
+        my_status_text(update),
         parse_mode=ParseMode.HTML,
-        reply_markup=stats_kb(),
+        reply_markup=status_kb(),
     )
 
 
@@ -729,7 +729,7 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "exp_time": exp_time_val,
         "tc": tc_val,
         "currency": currency_val,
-        "stats": "ACTIVE",
+        "status": "ACTIVE",
         "escrowed_by": creator_username,
         "chat_id": update.effective_chat.id,
         "exchange": is_exchange,
@@ -778,7 +778,7 @@ async def hold_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     Shows every bot admin's currently open (ACTIVE) deal amount.
     /close removes the deal from this report automatically because its
-    stats changes to COMPLETED/CANCELLED.
+    status changes to COMPLETED/CANCELLED.
     Non-owner users get no response.
     """
     if not update.effective_user or not is_admin(update.effective_user.id):
@@ -787,7 +787,7 @@ async def hold_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Only the owner can use this command, regardless of chat type.
     open_deals = [
         (tid, deal) for tid, deal in DEALS.items()
-        if deal.get("stats") == "ACTIVE"
+        if deal.get("status") == "ACTIVE"
     ]
 
     # Group ACTIVE deals by the admin/escrower who created them.
@@ -875,11 +875,11 @@ async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Deal not found.")
         return
 
-    if deal["stats"] == "HOLD":
+    if deal["status"] == "HOLD":
         await update.message.reply_text("⏸️ Yeh deal HOLD par hai. Pehle /unhold karo.")
         return
 
-    if deal["stats"] != "ACTIVE":
+    if deal["status"] != "ACTIVE":
         await update.message.reply_text("❌ Yeh deal already closed hai.")
         return
 
@@ -895,7 +895,7 @@ async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else deal["release"]
         )
 
-    deal["stats"] = "CANCELLED" if is_cancel else "COMPLETED"
+    deal["status"] = "CANCELLED" if is_cancel else "COMPLETED"
     deal["released"] = released_val
     deal["completed_at"] = datetime.now(timezone.utc).isoformat()
     save_deal(tid)
@@ -932,7 +932,7 @@ async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ===========================
 
 async def alldeals_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Purana '/stats' — ab admin ke liye saari deals ki poori list, private-only."""
+    """Purana '/status' — ab admin ke liye saari deals ki poori list, private-only."""
     if not admin_only_allowed(update):
         return
 
@@ -943,7 +943,7 @@ async def alldeals_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = [f"📊 <b>Total Deals:</b> {len(DEALS)}\n"]
     for tid, d in DEALS.items():
         lines.append(
-            f"<code>{esc(tid)}</code> — {d['stats']} — "
+            f"<code>{esc(tid)}</code> — {d['status']} — "
             f"{esc(d.get('buyer','-'))} ↔ {esc(d.get('seller','-'))} — "
             f"{fmt(d.get('amount',0), d.get('currency','INR'))}"
         )
@@ -961,8 +961,8 @@ async def leaderboard_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     def top_line(board, by):
         if not board:
             return "  koi data nahi"
-        top_user, stats = max(board.items(), key=lambda kv: kv[1][by])
-        return f"  {esc(top_user)} — {stats['deals']} deals, ₹{stats['volume']:,.2f}"
+        top_user, status = max(board.items(), key=lambda kv: kv[1][by])
+        return f"  {esc(top_user)} — {status['deals']} deals, ₹{status['volume']:,.2f}"
 
     msg = (
         f"{pe('🏆')} <b>Leaderboard</b>\n"
@@ -1178,7 +1178,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "──────────────────",
         "<b>👤 User Commands</b>",
         "/start — Dashboard kholo (private chat)",
-        "/stats — Apna deal stats dekho (private ya group, kahin bhi)",
+        "/status — Apna deal status dekho (private ya group, kahin bhi)",
         "/help — Ye list dikhata hai",
     ]
 
@@ -1246,7 +1246,7 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start_cmd))
-    app.add_handler(CommandHandler("stats", mystats_cmd))
+    app.add_handler(CommandHandler("status", mystatus_cmd))
     app.add_handler(CommandHandler("add", add))
     app.add_handler(CommandHandler("close", close))
     app.add_handler(CommandHandler("hold", hold_cmd))
