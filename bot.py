@@ -1178,7 +1178,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "──────────────────",
         "<b>👤 User Commands</b>",
         "/start — Dashboard kholo (private chat)",
-        "/status — Apna deal status dekho (private ya group, kahin bhi)",
+        "/stats — Apna deal status dekho (private ya group, kahin bhi)",
         "/help — Ye list dikhata hai",
     ]
 
@@ -1246,7 +1246,7 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start_cmd))
-    app.add_handler(CommandHandler("status", mystatus_cmd))
+    app.add_handler(CommandHandler("stats", mystatus_cmd))
     app.add_handler(CommandHandler("add", add))
     app.add_handler(CommandHandler("close", close))
     app.add_handler(CommandHandler("hold", hold_cmd))
