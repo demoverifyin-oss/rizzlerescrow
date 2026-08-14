@@ -1075,8 +1075,6 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<b>👤 User Commands</b>",
         "/start — Dashboard kholo (private chat)",
         "/status — Apna deal stats dekho (private ya group, kahin bhi)",
-        "/add — Deal create karo (deal message pe reply karke)",
-        "/close — Deal complete karo (deal message pe reply karke)",
         "/help — Ye list dikhata hai",
     ]
 
@@ -1084,6 +1082,8 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines += [
             "",
             "<b>🛡 Admin Commands</b> (private chat me hi kaam karenge)",
+            "/add — Deal create karo (deal message pe reply karke)",
+            "/close — Deal complete karo (deal message pe reply karke)",
             "/alldeals — Saari deals ki poori list",
             "/leaderboard — Today + All-time top dealer/earner",
             "/deal &lt;DL-RIZZLER-N&gt; — Kisi bhi deal ki full detail dekho",
