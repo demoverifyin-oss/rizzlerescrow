@@ -877,19 +877,69 @@ async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if reason and update.message:
             await update.message.reply_text(reason)
         return
-    
-    if not update.message.reply_to_message:
-        await update.message.reply_text("❌ Us deal ke message pe reply karke /close bhejo.")
+
+    tid = None
+    released_amount_arg = None
+
+    # ==========================================
+    # CASE 1: Direct ID
+    # /close DL-RIZZLER-4
+    # ==========================================
+    if context.args and re.fullmatch(
+        r"DL-RIZZLER-\d+",
+        context.args[0],
+        re.IGNORECASE
+    ):
+        tid = context.args[0].upper()
+
+        # Optional:
+        # /close DL-RIZZLER-4 300
+        if len(context.args) > 1:
+            released_amount_arg = context.args[1]
+
+    # ==========================================
+    # CASE 2: Reply karke close
+    # /close
+    # /close 300
+    # /close cancel
+    # ==========================================
+    elif update.message.reply_to_message:
+        reply_text = update.message.reply_to_message.text or ""
+
+        match = re.search(
+            r"Trade ID:\s*(DL-RIZZLER-\d+)",
+            reply_text,
+            re.IGNORECASE
+        )
+
+        if not match:
+            await update.message.reply_text(
+                "❌ Reply kiye gaye message me Trade ID nahi mila."
+            )
+            return
+
+        tid = match.group(1).upper()
+
+        if context.args:
+            released_amount_arg = context.args[0]
+
+    else:
+        await update.message.reply_text(
+            "❌ Deal close karne ke liye:\n\n"
+            "Reply karke:\n"
+            "<code>/close</code>\n"
+            "<code>/close 300</code>\n"
+            "<code>/close cancel</code>\n\n"
+            "Ya direct ID se:\n"
+            "<code>/close DL-RIZZLER-4</code>\n"
+            "<code>/close DL-RIZZLER-4 300</code>",
+            parse_mode=ParseMode.HTML,
+        )
         return
 
-    reply_text = update.message.reply_to_message.text or ""
-    match = re.search(r"Trade ID:\s*(DL-RIZZLER-\d+)", reply_text, re.IGNORECASE)
-
-    if not match:
-        await update.message.reply_text("❌ Reply kiye gaye message me Trade ID nahi mila.")
-        return
-
-    tid = match.group(1)
+    # ==========================================
+    # Deal lookup
+    # ==========================================
     deal = DEALS.get(tid)
 
     if not deal:
@@ -897,32 +947,50 @@ async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if deal["status"] == "HOLD":
-        await update.message.reply_text("⏸️ Yeh deal HOLD par hai. Pehle /unhold karo.")
+        await update.message.reply_text(
+            "⏸️ Yeh deal HOLD par hai. Pehle /unhold karo."
+        )
         return
 
     if deal["status"] != "ACTIVE":
-        await update.message.reply_text("❌ Yeh deal already closed hai.")
+        await update.message.reply_text(
+            "❌ Yeh deal already closed hai."
+        )
         return
 
-    is_cancel = bool(context.args) and context.args[0].lower() == "cancel"
+    # ==========================================
+    # Cancel / Complete
+    # ==========================================
+    is_cancel = (
+        released_amount_arg
+        and released_amount_arg.lower() == "cancel"
+    )
+
     currency_val = deal.get("currency", "INR")
 
     if is_cancel:
         released_val = 0.0
-    else:
-        released_val = (
-            extract_amount(context.args[0])
-            if context.args and not is_cancel
-            else deal["release"]
-        )
 
+    elif released_amount_arg:
+        released_val = extract_amount(released_amount_arg)
+
+    else:
+        released_val = deal["release"]
+
+    # ==========================================
+    # Update deal
+    # ==========================================
     deal["status"] = "CANCELLED" if is_cancel else "COMPLETED"
     deal["released"] = released_val
     deal["completed_at"] = datetime.now(timezone.utc).isoformat()
+
     save_deal(tid)
 
     closer = resolve_username(update)
 
+    # ==========================================
+    # Cancel message
+    # ==========================================
     if is_cancel:
         msg = (
             f"❌ Deal Cancelled\n"
@@ -930,6 +998,10 @@ async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{pe('ℹ️')} 100% of the charge has been deducted.\n"
             f"{pe('🛡️')} Escrowed By: {esc(closer)}"
         )
+
+    # ==========================================
+    # Completed message
+    # ==========================================
     else:
         msg = (
             f"{pe('✅')} Deal Completed\n"
@@ -938,10 +1010,16 @@ async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{pe('🛡️')} Escrowed By: {esc(closer)}\n\n"
             f"~ {esc(deal['buyer'])} and {esc(deal['seller'])} are requested to "
             f"drop the vouch before leaving👇🏻\n\n"
-            f"<code>Vouch @rizzlerxescrow for {fmt(released_val, currency_val)} smooth escrow deal</code>\n\n"
+            f"<code>Vouch @rizzlerxescrow for "
+            f"{fmt(released_val, currency_val)} smooth escrow deal❤️</code>\n"
         )
 
-    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+    await update.message.reply_text(
+        msg,
+        parse_mode=ParseMode.HTML
+    )
+
+    # Command message delete
     try:
         await update.message.delete()
     except Exception:
