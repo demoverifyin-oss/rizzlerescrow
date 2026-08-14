@@ -1078,29 +1078,75 @@ async def admins_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines = [f"{pe('👑')} <b>Owners</b>"]
 
-    lines += [
-        f"  <code>{uid}</code>"
-        for uid in sorted(OWNER_IDS)
-    ] or ["  (koi owner set nahi hai)"]
+    # ==========================
+    # OWNERS
+    # ==========================
+    if not OWNER_IDS:
+        lines.append("  (koi owner set nahi hai)")
+    else:
+        for uid in sorted(OWNER_IDS):
+            lines.append(
+                f'  • <a href="tg://user?id={uid}">Owner</a> '
+                f'<code>({uid})</code>'
+            )
 
+    # Extra admins
     extra_admins = BOT_ADMINS - OWNER_IDS
 
     lines.append(f"\n{pe('🛡')} <b>Bot Admins</b>")
 
     if not extra_admins:
         lines.append("  (koi extra admin nahi hai)")
-
     else:
         for uid in sorted(extra_admins):
 
-            # Alias se username nikalo
-            username = ADMIN_ALIASES.get(uid)
+            # Default values
+            username = None
+            first_name = None
+            last_name = None
 
-            if username:
-                # @ aur _ hata kar readable name banao
+            # ==========================
+            # 1. MongoDB se saved details
+            # ==========================
+            if admins_coll is not None:
+                admin_doc = admins_coll.find_one(
+                    {"_id": uid}
+                )
+
+                if admin_doc:
+                    username = admin_doc.get("username")
+                    first_name = admin_doc.get("first_name")
+                    last_name = admin_doc.get("last_name")
+
+            # ==========================
+            # 2. Alias fallback
+            # ==========================
+            if not username and uid in ADMIN_ALIASES:
+                username = ADMIN_ALIASES[uid]
+
+            # ==========================
+            # 3. Display name banao
+            # ==========================
+            display_name = ""
+
+            if first_name:
+                display_name = first_name
+
+                if last_name:
+                    display_name += f" {last_name}"
+
+            elif username:
                 display_name = username.replace("_", " ").title()
 
-                # Clickable name + ID
+            else:
+                display_name = "Admin"
+
+            # ==========================
+            # Clickable display
+            # ==========================
+
+            if username:
+                # Username hai -> clickable public Telegram link
                 lines.append(
                     f'  • <a href="https://t.me/{esc(username)}">'
                     f'{esc(display_name)}</a> '
@@ -1108,9 +1154,10 @@ async def admins_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
 
             else:
-                # Alias nahi hai to clickable fallback
+                # Username nahi hai -> ID based clickable mention
                 lines.append(
-                    f'  • <a href="tg://user?id={uid}">Admin</a> '
+                    f'  • <a href="tg://user?id={uid}">'
+                    f'{esc(display_name)}</a> '
                     f'<code>({uid})</code>'
                 )
 
