@@ -705,12 +705,33 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     seller_val = seller.group(1).strip() if seller else "-"
     buyer_val = buyer.group(1).strip() if buyer else "-"
     detail_val = detail.group(1).strip() if detail else "-"
-    amount_val = extract_amount(amount.group(1)) if amount else 0.0
+    # Normal form se amount
+    form_amount_val = extract_amount(amount.group(1)) if amount else 0.0
+
     exp_time_val = exp_time.group(1).strip() if exp_time else "-"
     tc_val = tc.group(1).strip() if tc else "-"
     currency_val = currency.group(1).strip().upper() if currency else "INR"
 
-    is_exchange = bool(context.args) and context.args[0].lower() == "exchange"
+    # ==================================================
+    # /add 500 -> ₹500 amount use hoga
+    # /add      -> form wala DEAL AMOUNT use hoga
+    # /add exchange -> form amount + exchange fee
+    # ==================================================
+
+    is_exchange = False
+    amount_val = form_amount_val
+
+    if context.args:
+        arg = context.args[0].strip()
+
+        if arg.lower() == "exchange":
+            is_exchange = True
+        else:
+        # /add 500, /add 3000, /add 1,500 etc.
+            custom_amount = extract_amount(arg)
+
+            if custom_amount > 0:
+                amount_val = custom_amount
 
     tid = next_trade_id()
     creator_username = resolve_username(update)
