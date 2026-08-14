@@ -938,7 +938,7 @@ async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{pe('🛡️')} Escrowed By: {esc(closer)}\n\n"
             f"~ {esc(deal['buyer'])} and {esc(deal['seller'])} are requested to "
             f"drop the vouch before leaving👇🏻\n\n"
-            f"<code>Vouch @rizzlerxescrow for {fmt(released_val, currency_val)} smooth escrow deal❤️</code>\n\n"
+            f"<code>Vouch @rizzlerxescrow for {fmt(released_val, currency_val)} smooth escrow deal</code>\n\n"
         )
 
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
