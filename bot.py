@@ -1055,12 +1055,41 @@ async def admins_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     lines = [f"{pe('👑')} <b>Owners</b>"]
-    lines += [f"  <code>{uid}</code>" for uid in OWNER_IDS] or ["  (koi owner set nahi hai)"]
-    extra_admins = BOT_ADMINS - OWNER_IDS
-    lines.append(f"\n{pe('🛡')} <b>Bot Admins</b>")
-    lines += [f"  <code>{uid}</code>" for uid in extra_admins] or ["  (koi extra admin nahi hai)"]
+    lines += [
+        f"  <code>{uid}</code>"
+        for uid in sorted(OWNER_IDS)
+    ] or ["  (koi owner set nahi hai)"]
 
-    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+    extra_admins = BOT_ADMINS - OWNER_IDS
+
+    lines.append(f"\n{pe('🛡')} <b>Bot Admins</b>")
+
+    if not extra_admins:
+        lines.append("  (koi extra admin nahi hai)")
+    else:
+        for uid in sorted(extra_admins):
+            # Existing ADMIN_ALIASES dict se username lo
+            username = ADMIN_ALIASES.get(uid)
+
+            if username:
+                # Username clickable + ID side me
+                lines.append(
+                    f'  • <a href="https://t.me/{esc(username)}">'
+                    f'@{esc(username)}</a> '
+                    f'<code>({uid})</code>'
+                )
+            else:
+                # Username alias me nahi hai to ID fallback
+                lines.append(
+                    f'  • <a href="tg://user?id={uid}">Admin</a> '
+                    f'<code>({uid})</code>'
+                )
+
+    await update.message.reply_text(
+        "\n".join(lines),
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
 
 
 # ===========================
