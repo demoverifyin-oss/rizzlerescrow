@@ -1088,7 +1088,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/leaderboard — Today + All-time top dealer/earner",
             "/deal &lt;DL-RIZZLER-N&gt; — Kisi bhi deal ki full detail dekho",
             "/admins — Bot admins ki list dekho",
-            "/broadcast <message> — Private subscribers ko broadcast",
+            "/broadcast &lt;message&gt; — Private subscribers ko broadcast",
         ]
 
     if is_owner(uid):
