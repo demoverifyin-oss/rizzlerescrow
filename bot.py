@@ -752,6 +752,7 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "currency": currency_val,
         "status": "ACTIVE",
         "escrowed_by": creator_username,
+        "created_by_id": update.effective_user.id,
         "chat_id": update.effective_chat.id,
         "exchange": is_exchange,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -873,6 +874,7 @@ async def hold_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
     allowed, reason = await add_close_allowed(update, context)
+
     if not allowed:
         if reason and update.message:
             await update.message.reply_text(reason)
@@ -883,7 +885,10 @@ async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ==========================================
     # CASE 1: Direct ID
+    #
     # /close DL-RIZZLER-4
+    # /close DL-RIZZLER-4 300
+    # /close DL-RIZZLER-4 cancel
     # ==========================================
     if context.args and re.fullmatch(
         r"DL-RIZZLER-\d+",
@@ -892,13 +897,12 @@ async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ):
         tid = context.args[0].upper()
 
-        # Optional:
-        # /close DL-RIZZLER-4 300
         if len(context.args) > 1:
             released_amount_arg = context.args[1]
 
     # ==========================================
-    # CASE 2: Reply karke close
+    # CASE 2: Reply karke
+    #
     # /close
     # /close 300
     # /close cancel
@@ -923,16 +927,20 @@ async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if context.args:
             released_amount_arg = context.args[0]
 
+    # ==========================================
+    # Invalid usage
+    # ==========================================
     else:
         await update.message.reply_text(
             "❌ Deal close karne ke liye:\n\n"
-            "Reply karke:\n"
+            "<b>Reply karke:</b>\n"
             "<code>/close</code>\n"
             "<code>/close 300</code>\n"
             "<code>/close cancel</code>\n\n"
-            "Ya direct ID se:\n"
+            "<b>Ya direct ID se:</b>\n"
             "<code>/close DL-RIZZLER-4</code>\n"
-            "<code>/close DL-RIZZLER-4 300</code>",
+            "<code>/close DL-RIZZLER-4 300</code>\n"
+            "<code>/close DL-RIZZLER-4 cancel</code>",
             parse_mode=ParseMode.HTML,
         )
         return
@@ -943,18 +951,55 @@ async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
     deal = DEALS.get(tid)
 
     if not deal:
-        await update.message.reply_text("❌ Deal not found.")
+        await update.message.reply_text(
+            f"❌ Deal <code>{esc(tid)}</code> not found.",
+            parse_mode=ParseMode.HTML,
+        )
         return
 
-    if deal["status"] == "HOLD":
+    # ==========================================
+    # CLOSE PERMISSION CHECK
+    #
+    # Owner -> kisi ki bhi deal close kar sakta hai
+    # Admin -> sirf apni create ki hui deal close kar sakta hai
+    # ==========================================
+    closer_id = update.effective_user.id
+    deal_creator_id = deal.get("created_by_id")
+
+    if not is_owner(closer_id):
+
+        # New deals:
+        # Telegram user ID exact match
+        if deal_creator_id is not None:
+
+            if closer_id != deal_creator_id:
+                await update.message.reply_text(
+                    "❌ Tum sirf apni create ki hui deal close kar sakte ho."
+                )
+                return
+
+        # Old deals:
+        # created_by_id nahi hai to username fallback
+        else:
+
+            if resolve_username(update) != deal.get("escrowed_by"):
+                await update.message.reply_text(
+                    "❌ Tum sirf apni create ki hui deal close kar sakte ho."
+                )
+                return
+
+    # ==========================================
+    # Status check
+    # ==========================================
+    if deal.get("status") == "HOLD":
         await update.message.reply_text(
             "⏸️ Yeh deal HOLD par hai. Pehle /unhold karo."
         )
         return
 
-    if deal["status"] != "ACTIVE":
+    if deal.get("status") != "ACTIVE":
         await update.message.reply_text(
-            "❌ Yeh deal already closed hai."
+            f"❌ Yeh deal already {deal.get('status', 'closed')} hai."
         )
         return
 
@@ -975,7 +1020,7 @@ async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
         released_val = extract_amount(released_amount_arg)
 
     else:
-        released_val = deal["release"]
+        released_val = deal.get("release", 0.0)
 
     # ==========================================
     # Update deal
@@ -983,6 +1028,10 @@ async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
     deal["status"] = "CANCELLED" if is_cancel else "COMPLETED"
     deal["released"] = released_val
     deal["completed_at"] = datetime.now(timezone.utc).isoformat()
+
+    # Optional: actual kisne close kiya record karo
+    deal["closed_by_id"] = closer_id
+    deal["closed_by"] = resolve_username(update)
 
     save_deal(tid)
 
@@ -992,26 +1041,28 @@ async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Cancel message
     # ==========================================
     if is_cancel:
+
         msg = (
-            f"❌ Deal Cancelled\n"
+            f"❌ <b>Deal Cancelled</b>\n"
             f"{pe('🆔')} Trade ID: <code>{esc(tid)}</code>\n"
             f"{pe('ℹ️')} 100% of the charge has been deducted.\n"
-            f"{pe('🛡️')} Escrowed By: {esc(closer)}"
+            f"{pe('🛡️')} Escrowed By: {esc(deal.get('escrowed_by', '-'))}"
         )
 
     # ==========================================
     # Completed message
     # ==========================================
     else:
+
         msg = (
-            f"{pe('✅')} Deal Completed\n"
+            f"{pe('✅')} <b>Deal Completed</b>\n"
             f"{pe('🆔')} Trade ID: <code>{esc(tid)}</code>\n"
             f"{pe('📤')} Released: {fmt(released_val, currency_val)}\n"
-            f"{pe('🛡️')} Escrowed By: {esc(closer)}\n\n"
+            f"{pe('🛡️')} Escrowed By: {esc(deal.get('escrowed_by', '-'))}\n\n"
             f"~ {esc(deal['buyer'])} and {esc(deal['seller'])} are requested to "
             f"drop the vouch before leaving👇🏻\n\n"
             f"<code>Vouch @rizzlerxescrow for "
-            f"{fmt(released_val, currency_val)} smooth escrow deal❤️</code>\n"
+            f"{fmt(released_val, currency_val)} smooth escrow deal</code>\n"
         )
 
     await update.message.reply_text(
