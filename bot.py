@@ -1156,7 +1156,7 @@ async def collect_close_album_photo(update: Update, context: ContextTypes.DEFAUL
     if not message or not message.photo or not message.media_group_id:
         return
     caption = (message.caption or "").strip()
-    is_close_caption = bool(re.match(r"^\\s*/close(?:@\\w+)?(?:\\s|$)", caption, re.IGNORECASE))
+    is_close_caption = bool(re.match(r"^\s*/close(?:@\w+)?(?:\s|$)", caption, re.IGNORECASE))
     if not is_close_caption and not message.reply_to_message:
         return
     key = (message.chat_id, message.media_group_id)
@@ -1188,34 +1188,37 @@ async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if item.get("file_id")
         ]
 
-    if not message.reply_to_message:
+    # Preserve legacy text-command usage while also supporting /close in a photo caption.
+    tid = None
+    released_amount_arg = None
+    if context.args and re.fullmatch(r"DL-RIZZLER-\d+", context.args[0], re.IGNORECASE):
+        tid = context.args[0].upper()
+        if len(context.args) > 1:
+            released_amount_arg = context.args[1]
+    elif context.args:
+        released_amount_arg = context.args[0]
+
+    if not tid and message.reply_to_message:
+        reply_message = message.reply_to_message
+        reply_text = reply_message.text or reply_message.caption or ""
+        match = re.search(r"Trade ID\s*:\s*(?:<code>)?(DL-RIZZLER-\d+)", reply_text, re.IGNORECASE)
+        if not match:
+            match = re.search(r"(DL-RIZZLER-\d+)", reply_text, re.IGNORECASE)
+        if match:
+            tid = match.group(1).upper()
+
+    if not tid:
         await message.reply_text(
-            "❌ /close ko original deal message par reply karke bhejo.\\n\\n"
-            "📸 Payment screenshot attach karo aur caption me /close likho."
-        )
-        return
-    if not message.photo and not payment_file_ids:
-        await message.reply_text(
-            "❌ Payment screenshot required hai.\\n\\n"
-            "Original deal par reply + screenshot attach + caption `/close`."
+            "❌ Original deal message par reply karke /close bhejo, ya direct Trade ID use karo.\n\n"
+            "📸 Image ke saath: deal message par reply + photo caption `/close`\n"
+            "📝 Text: `/close DL-RIZZLER-123`"
         )
         return
 
-    reply_message = message.reply_to_message
-    reply_text = reply_message.text or reply_message.caption or ""
-    match = re.search(r"Trade ID\\s*:\\s*(?:<code>)?(DL-RIZZLER-\\d+)", reply_text, re.IGNORECASE)
-    if not match:
-        match = re.search(r"(DL-RIZZLER-\\d+)", reply_text, re.IGNORECASE)
-    if not match:
-        await message.reply_text("❌ Reply kiye gaye message me valid Trade ID nahi mila.")
-        return
-    tid = match.group(1).upper()
-
-    released_amount_arg = context.args[0] if context.args else None
     caption = (message.caption or "").strip()
     if message.photo and caption:
         caption_match = re.match(
-            r"^\\s*/close(?:@\\w+)?(?:\\s+([^\\s]+))?\\s*$", caption, re.IGNORECASE
+            r"^\s*/close(?:@\w+)?(?:\s+([^\s]+))?\s*$", caption, re.IGNORECASE
         )
         if caption_match:
             released_amount_arg = caption_match.group(1)
@@ -1251,7 +1254,7 @@ async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         released_val = deal.get("release", 0.0)
 
-    proof_ids = list(dict.fromkeys(payment_file_ids or [message.photo[-1].file_id]))
+    proof_ids = list(dict.fromkeys(payment_file_ids or ([message.photo[-1].file_id] if message.photo else [])))
     deal["payment_proof_file_ids"] = proof_ids
     deal["payment_proof_file_id"] = proof_ids[0] if proof_ids else None
     deal["payment_proof_uploaded_by_id"] = closer_id
@@ -1266,19 +1269,19 @@ async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if is_cancel:
         msg = (
-            f"❌ <b>Deal Cancelled</b>\\n"
-            f"{pe('🆔')} Trade ID: <code>{esc(tid)}</code>\\n"
-            f"{pe('ℹ️')} Deal cancelled.\\n"
+            f"❌ <b>Deal Cancelled</b>\n"
+            f"{pe('🆔')} Trade ID: <code>{esc(tid)}</code>\n"
+            f"{pe('ℹ️')} Deal cancelled.\n"
             f"{pe('🛡️')} Escrowed By: {esc(deal.get('escrowed_by', '-'))}"
         )
     else:
         msg = (
-            f"{pe('✅')} <b>Deal Completed</b>\\n"
-            f"{pe('🆔')} Trade ID: <code>{esc(tid)}</code>\\n"
-            f"{pe('📤')} Released: {fmt(released_val, currency_val)}\\n"
-            f"{pe('🛡️')} Escrowed By: {esc(deal.get('escrowed_by', '-'))}\\n\\n"
+            f"{pe('✅')} <b>Deal Completed</b>\n"
+            f"{pe('🆔')} Trade ID: <code>{esc(tid)}</code>\n"
+            f"{pe('📤')} Released: {fmt(released_val, currency_val)}\n"
+            f"{pe('🛡️')} Escrowed By: {esc(deal.get('escrowed_by', '-'))}\n\n"
             f"~ {esc(deal.get('buyer', '-'))} and {esc(deal.get('seller', '-'))} are requested to "
-            f"drop the vouch before leaving👇🏻\\n\\n"
+            f"drop the vouch before leaving👇🏻\n\n"
             f"<code>Vouch @rizzlerxescrow for {fmt(released_val, currency_val)} smooth escrow deal</code>"
         )
 
@@ -2791,7 +2794,7 @@ def main():
     app.add_handler(MessageHandler(filters.PHOTO, collect_close_album_photo), group=-20)
     app.add_handler(
         MessageHandler(
-            filters.PHOTO & filters.CaptionRegex(r"^\\s*/close(?:@\\w+)?(?:\\s|$)"),
+            filters.PHOTO & filters.CaptionRegex(r"^\s*/close(?:@\w+)?(?:\s|$)"),
             close,
         )
     )
