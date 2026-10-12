@@ -1092,214 +1092,237 @@ async def hold_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # /close
 # ===========================
 
-async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    allowed, reason = await add_close_allowed(update, context)
+# ===========================
+# CLOSE IMAGE + PAYMENT PROOF ALBUM
+# ===========================
 
-    if not allowed:
-        if reason and update.message:
-            await update.message.reply_text(reason)
+CLOSE_IMAGE_META_ID = "owner_close_image"
+CLOSE_ALBUMS = {}
+
+
+def get_close_image_id():
+    """Read the owner-selected completion image Telegram file_id from Mongo."""
+    if meta_coll is None:
+        return None
+    try:
+        doc = meta_coll.find_one({"_id": CLOSE_IMAGE_META_ID})
+        return doc.get("file_id") if doc else None
+    except Exception:
+        logger.exception("Could not read configured close image")
+        return None
+
+
+async def setcloseimage_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Owner-only: save a photo as the completion card for closed deals."""
+    message = update.message
+    if not message or not update.effective_user or not is_owner(update.effective_user.id):
+        return
+    photo = message.photo[-1] if message.photo else None
+    if not photo and message.reply_to_message and message.reply_to_message.photo:
+        photo = message.reply_to_message.photo[-1]
+    if not photo:
+        await message.reply_text(
+            "❌ Owner: photo ke saath /setcloseimage bhejo, ya kisi photo par reply karke /setcloseimage bhejo."
+        )
+        return
+    if meta_coll is None:
+        await message.reply_text("❌ MongoDB required hai close image save karne ke liye.")
+        return
+    meta_coll.update_one(
+        {"_id": CLOSE_IMAGE_META_ID},
+        {"$set": {
+            "file_id": photo.file_id,
+            "updated_by": update.effective_user.id,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }},
+        upsert=True,
+    )
+    await message.reply_text("✅ Rizzler close image save ho gayi. Completed deals isi image ke saath aayengi.")
+
+
+async def removecloseimage_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Owner-only: remove the configured completion card."""
+    message = update.message
+    if not message or not update.effective_user or not is_owner(update.effective_user.id):
+        return
+    if meta_coll is not None:
+        meta_coll.delete_one({"_id": CLOSE_IMAGE_META_ID})
+    await message.reply_text("✅ Custom close image remove ho gayi. Ab payment proof par completion details aayengi.")
+
+
+async def collect_close_album_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cache Telegram file_ids for photos in a /close album; never downloads files."""
+    message = update.message
+    if not message or not message.photo or not message.media_group_id:
+        return
+    caption = (message.caption or "").strip()
+    is_close_caption = bool(re.match(r"^\\s*/close(?:@\\w+)?(?:\\s|$)", caption, re.IGNORECASE))
+    if not is_close_caption and not message.reply_to_message:
+        return
+    key = (message.chat_id, message.media_group_id)
+    bucket = CLOSE_ALBUMS.setdefault(key, {})
+    bucket[message.message_id] = {
+        "file_id": message.photo[-1].file_id,
+        "message_id": message.message_id,
+    }
+
+
+async def close(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Close a Rizzler deal with payment screenshot; supports photo captions/albums."""
+    message = update.message
+    if not message:
         return
 
-    tid = None
-    released_amount_arg = None
+    allowed, reason = await add_close_allowed(update, context)
+    if not allowed:
+        if reason:
+            await message.reply_text(reason)
+        return
 
-    # ==========================================
-    # CASE 1: Direct ID
-    #
-    # /close DL-RIZZLER-4
-    # /close DL-RIZZLER-4 300
-    # /close DL-RIZZLER-4 cancel
-    # ==========================================
-    if context.args and re.fullmatch(
-        r"DL-RIZZLER-\d+",
-        context.args[0],
-        re.IGNORECASE
-    ):
-        tid = context.args[0].upper()
+    payment_file_ids = None
+    if message.media_group_id:
+        await asyncio.sleep(1.0)
+        bucket = CLOSE_ALBUMS.pop((message.chat_id, message.media_group_id), {})
+        payment_file_ids = [
+            item["file_id"] for item in sorted(bucket.values(), key=lambda x: x["message_id"])
+            if item.get("file_id")
+        ]
 
-        if len(context.args) > 1:
-            released_amount_arg = context.args[1]
-
-    # ==========================================
-    # CASE 2: Reply karke
-    #
-    # /close
-    # /close 300
-    # /close cancel
-    # ==========================================
-    elif update.message.reply_to_message:
-        reply_text = update.message.reply_to_message.text or ""
-
-        match = re.search(
-            r"Trade ID:\s*(DL-RIZZLER-\d+)",
-            reply_text,
-            re.IGNORECASE
+    if not message.reply_to_message:
+        await message.reply_text(
+            "❌ /close ko original deal message par reply karke bhejo.\\n\\n"
+            "📸 Payment screenshot attach karo aur caption me /close likho."
         )
+        return
+    if not message.photo and not payment_file_ids:
+        await message.reply_text(
+            "❌ Payment screenshot required hai.\\n\\n"
+            "Original deal par reply + screenshot attach + caption `/close`."
+        )
+        return
 
-        if not match:
-            await update.message.reply_text(
-                "❌ Reply kiye gaye message me Trade ID nahi mila."
-            )
+    reply_message = message.reply_to_message
+    reply_text = reply_message.text or reply_message.caption or ""
+    match = re.search(r"Trade ID\\s*:\\s*(?:<code>)?(DL-RIZZLER-\\d+)", reply_text, re.IGNORECASE)
+    if not match:
+        match = re.search(r"(DL-RIZZLER-\\d+)", reply_text, re.IGNORECASE)
+    if not match:
+        await message.reply_text("❌ Reply kiye gaye message me valid Trade ID nahi mila.")
+        return
+    tid = match.group(1).upper()
+
+    released_amount_arg = context.args[0] if context.args else None
+    caption = (message.caption or "").strip()
+    if message.photo and caption:
+        caption_match = re.match(
+            r"^\\s*/close(?:@\\w+)?(?:\\s+([^\\s]+))?\\s*$", caption, re.IGNORECASE
+        )
+        if caption_match:
+            released_amount_arg = caption_match.group(1)
+
+    deal = DEALS.get(tid)
+    if not deal:
+        await message.reply_text(f"❌ Deal <code>{esc(tid)}</code> not found.", parse_mode=ParseMode.HTML)
+        return
+
+    closer_id = update.effective_user.id
+    creator_id = deal.get("created_by_id")
+    if not is_owner(closer_id):
+        if creator_id is not None and closer_id != creator_id:
+            await message.reply_text("❌ Tum sirf apni create ki hui deal close kar sakte ho.")
+            return
+        if creator_id is None and resolve_username(update) != deal.get("escrowed_by"):
+            await message.reply_text("❌ Tum sirf apni create ki hui deal close kar sakte ho.")
             return
 
-        tid = match.group(1).upper()
-
-        if context.args:
-            released_amount_arg = context.args[0]
-
-    # ==========================================
-    # Invalid usage
-    # ==========================================
-    else:
-        await update.message.reply_text(
-            "❌ Deal close karne ke liye:\n\n"
-            "<b>Reply karke:</b>\n"
-            "<code>/close</code>\n"
-            "<code>/close 300</code>\n"
-            "<code>/close cancel</code>\n\n"
-            "<b>Ya direct ID se:</b>\n"
-            "<code>/close DL-RIZZLER-4</code>\n"
-            "<code>/close DL-RIZZLER-4 300</code>\n"
-            "<code>/close DL-RIZZLER-4 cancel</code>",
-            parse_mode=ParseMode.HTML,
-        )
-        return
-
-    # ==========================================
-    # Deal lookup
-    # ==========================================
-    deal = DEALS.get(tid)
-
-    if not deal:
-        await update.message.reply_text(
-            f"❌ Deal <code>{esc(tid)}</code> not found.",
-            parse_mode=ParseMode.HTML,
-        )
-        return
-
-    # ==========================================
-    # CLOSE PERMISSION CHECK
-    #
-    # Owner -> kisi ki bhi deal close kar sakta hai
-    # Admin -> sirf apni create ki hui deal close kar sakta hai
-    # ==========================================
-    closer_id = update.effective_user.id
-    deal_creator_id = deal.get("created_by_id")
-
-    if not is_owner(closer_id):
-
-        # New deals:
-        # Telegram user ID exact match
-        if deal_creator_id is not None:
-
-            if closer_id != deal_creator_id:
-                await update.message.reply_text(
-                    "❌ Tum sirf apni create ki hui deal close kar sakte ho."
-                )
-                return
-
-        # Old deals:
-        # created_by_id nahi hai to username fallback
-        else:
-
-            if resolve_username(update) != deal.get("escrowed_by"):
-                await update.message.reply_text(
-                    "❌ Tum sirf apni create ki hui deal close kar sakte ho."
-                )
-                return
-
-    # ==========================================
-    # Status check
-    # ==========================================
     if deal.get("status") == "HOLD":
-        await update.message.reply_text(
-            "⏸️ Yeh deal HOLD par hai. Pehle /unhold karo."
-        )
+        await message.reply_text("⏸️ Yeh deal HOLD par hai. Pehle /unhold karo.")
         return
-
     if deal.get("status") != "ACTIVE":
-        await update.message.reply_text(
-            f"❌ Yeh deal already {deal.get('status', 'closed')} hai."
-        )
+        await message.reply_text(f"❌ Yeh deal already {deal.get('status', 'closed')} hai.")
         return
 
-    # ==========================================
-    # Cancel / Complete
-    # ==========================================
-    is_cancel = (
-        released_amount_arg
-        and released_amount_arg.lower() == "cancel"
-    )
-
+    is_cancel = bool(released_amount_arg and released_amount_arg.lower() == "cancel")
     currency_val = deal.get("currency", "INR")
-
     if is_cancel:
         released_val = 0.0
-
     elif released_amount_arg:
         released_val = extract_amount(released_amount_arg)
-
     else:
         released_val = deal.get("release", 0.0)
 
-    # ==========================================
-    # Update deal
-    # ==========================================
+    proof_ids = list(dict.fromkeys(payment_file_ids or [message.photo[-1].file_id]))
+    deal["payment_proof_file_ids"] = proof_ids
+    deal["payment_proof_file_id"] = proof_ids[0] if proof_ids else None
+    deal["payment_proof_uploaded_by_id"] = closer_id
+    deal["payment_proof_uploaded_at"] = datetime.now(timezone.utc).isoformat()
+    deal["payment_proof_count"] = len(proof_ids)
     deal["status"] = "CANCELLED" if is_cancel else "COMPLETED"
     deal["released"] = released_val
     deal["completed_at"] = datetime.now(timezone.utc).isoformat()
-
-    # Optional: actual kisne close kiya record karo
     deal["closed_by_id"] = closer_id
     deal["closed_by"] = resolve_username(update)
-
     save_deal(tid)
 
-    closer = resolve_username(update)
-
-    # ==========================================
-    # Cancel message
-    # ==========================================
     if is_cancel:
-
         msg = (
-            f"❌ <b>Deal Cancelled</b>\n"
-            f"{pe('🆔')} Trade ID: <code>{esc(tid)}</code>\n"
-            f"{pe('ℹ️')} 100% of the charge has been deducted.\n"
+            f"❌ <b>Deal Cancelled</b>\\n"
+            f"{pe('🆔')} Trade ID: <code>{esc(tid)}</code>\\n"
+            f"{pe('ℹ️')} Deal cancelled.\\n"
             f"{pe('🛡️')} Escrowed By: {esc(deal.get('escrowed_by', '-'))}"
         )
-
-    # ==========================================
-    # Completed message
-    # ==========================================
     else:
-
         msg = (
-            f"{pe('✅')} <b>Deal Completed</b>\n"
-            f"{pe('🆔')} Trade ID: <code>{esc(tid)}</code>\n"
-            f"{pe('📤')} Released: {fmt(released_val, currency_val)}\n"
-            f"{pe('🛡️')} Escrowed By: {esc(deal.get('escrowed_by', '-'))}\n\n"
-            f"~ {esc(deal['buyer'])} and {esc(deal['seller'])} are requested to "
-            f"drop the vouch before leaving👇🏻\n\n"
-            f"<code>Vouch @rizzlerxescrow for "
-            f"{fmt(released_val, currency_val)} smooth escrow deal</code>\n"
+            f"{pe('✅')} <b>Deal Completed</b>\\n"
+            f"{pe('🆔')} Trade ID: <code>{esc(tid)}</code>\\n"
+            f"{pe('📤')} Released: {fmt(released_val, currency_val)}\\n"
+            f"{pe('🛡️')} Escrowed By: {esc(deal.get('escrowed_by', '-'))}\\n\\n"
+            f"~ {esc(deal.get('buyer', '-'))} and {esc(deal.get('seller', '-'))} are requested to "
+            f"drop the vouch before leaving👇🏻\\n\\n"
+            f"<code>Vouch @rizzlerxescrow for {fmt(released_val, currency_val)} smooth escrow deal</code>"
         )
 
-    await update.message.reply_text(
-        msg,
-        parse_mode=ParseMode.HTML
-    )
+    sent_photo = False
+    close_image_id = get_close_image_id()
+    if not is_cancel and close_image_id:
+        try:
+            await context.bot.send_photo(
+                chat_id=message.chat_id, photo=close_image_id,
+                caption=msg, parse_mode=ParseMode.HTML,
+            )
+            sent_photo = True
+        except (BadRequest, TelegramError):
+            logger.exception("Configured close image failed; falling back to payment proof")
+            close_image_id = None
 
-    # Command message delete
+    if not is_cancel and not sent_photo and proof_ids:
+        for index, file_id in enumerate(proof_ids):
+            try:
+                if index == 0:
+                    await context.bot.send_photo(
+                        chat_id=message.chat_id, photo=file_id,
+                        caption=msg, parse_mode=ParseMode.HTML,
+                    )
+                else:
+                    await context.bot.send_photo(chat_id=message.chat_id, photo=file_id)
+                sent_photo = True
+            except (BadRequest, TelegramError):
+                logger.exception("Could not send payment proof image")
+    elif not is_cancel and sent_photo:
+        for file_id in proof_ids:
+            try:
+                await context.bot.send_photo(chat_id=message.chat_id, photo=file_id)
+            except (BadRequest, TelegramError):
+                logger.exception("Could not resend payment proof image")
+
+    if is_cancel or not sent_photo:
+        await message.reply_text(msg, parse_mode=ParseMode.HTML)
     try:
-        await update.message.delete()
+        await message.delete()
     except Exception:
         pass
 
 
-# ===========================
-# /alldeals, /leaderboard, /deal — admin only, private chat only, silent skip warna
-# ===========================
 
 async def alldeals_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Purana '/status' — ab admin ke liye saari deals ki poori list, private-only."""
@@ -2659,7 +2682,9 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "",
             "<b>🛡 Admin Commands</b> (private chat me hi kaam karenge)",
             "/add — Deal create karo (deal message pe reply karke)",
-            "/close — Deal complete karo (deal message pe reply karke)",
+            "/close — Payment screenshot ke saath deal complete karo",
+            "/setcloseimage — Owner completion image set kare",
+            "/removecloseimage — Owner completion image remove kare",
             "/alldeals — Saari deals ki poori list",
             "/leaderboard — Today + All-time top dealer/earner",
             "/deal &lt;DL-RIZZLER-N&gt; — Kisi bhi deal ki full detail dekho",
@@ -2763,6 +2788,15 @@ def main():
     app.add_handler(CommandHandler("del", del_cmd))
     app.add_handler(CommandHandler("add", add))
     app.add_handler(CommandHandler("close", close))
+    app.add_handler(MessageHandler(filters.PHOTO, collect_close_album_photo), group=-20)
+    app.add_handler(
+        MessageHandler(
+            filters.PHOTO & filters.CaptionRegex(r"^\\s*/close(?:@\\w+)?(?:\\s|$)"),
+            close,
+        )
+    )
+    app.add_handler(CommandHandler("setcloseimage", setcloseimage_cmd))
+    app.add_handler(CommandHandler("removecloseimage", removecloseimage_cmd))
     app.add_handler(CommandHandler("hold", hold_cmd))
     app.add_handler(CommandHandler("broadcast", broadcast_cmd))
     app.add_handler(CommandHandler("alldeals", alldeals_cmd))
